@@ -1,0 +1,219 @@
+"""Main application orchestrator."""
+
+from pathlib import Path
+from typing import Dict, List, Optional
+
+from smart_test_generator.config import Config
+from smart_test_generator.utils.user_feedback import UserFeedback
+from smart_test_generator.services import TestGenerationService, CoverageService, AnalysisService
+from smart_test_generator.core.llm_factory import LLMClientFactory
+from smart_test_generator.exceptions import SmartTestGeneratorError
+
+
+class SmartTestGeneratorApp:
+    """Main application orchestrator that coordinates between services."""
+    
+    def __init__(self, target_dir: Path, project_root: Path, config: Config, feedback: Optional[UserFeedback] = None):
+        self.target_dir = target_dir  # Directory to scan for files
+        self.project_root = project_root  # Project root for configuration
+        self.config = config
+        self.feedback = feedback or UserFeedback()
+        
+        # Initialize services with target directory for scanning but project root for config
+        self.analysis_service = AnalysisService(target_dir, project_root, config, feedback)
+        self.coverage_service = CoverageService(project_root, config, feedback)
+        self.test_generation_service = TestGenerationService(project_root, config, feedback)
+    
+    def _ensure_state_synced(self) -> None:
+        """Ensure state tracker is synced with existing tests before any operation."""
+        try:
+            # Don't show verbose sync messages - let the spinner handle the display
+            sync_result = self.analysis_service.sync_state_with_existing_tests()
+            self.feedback.debug(sync_result)
+        except Exception as e:
+            self.feedback.warning(f"State sync failed, continuing with current state: {e}")
+
+    def run_analysis_mode(self, force: bool = False) -> str:
+        """Run analysis mode to show what would be done."""
+        try:
+            # Always sync state with existing tests first
+            self._ensure_state_synced()
+            
+            # Find all Python files
+            all_files = self.analysis_service.find_python_files()
+            
+            # Analyze which files need test generation
+            files_to_process, reasons, coverage_data = self.analysis_service.analyze_files_for_generation(
+                all_files, force
+            )
+            
+            # Create test plans
+            test_plans = self.analysis_service.create_test_plans(files_to_process, coverage_data)
+            
+            # Analyze test quality for existing tests
+            quality_reports = self.analysis_service.analyze_test_quality(test_plans)
+            
+            # Generate analysis report
+            analysis_report = self.analysis_service.generate_analysis_report(
+                all_files, files_to_process, test_plans, reasons
+            )
+            
+            # Generate quality gaps report
+            quality_gaps_report = self.analysis_service.generate_quality_gaps_report(quality_reports)
+            
+            # Combine reports
+            return f"{analysis_report}\n\n{quality_gaps_report}"
+            
+        except Exception as e:
+            self.feedback.error(f"Analysis failed: {e}")
+            raise
+    
+    def run_coverage_mode(self) -> str:
+        """Run coverage analysis mode."""
+        try:
+            # Always sync state with existing tests first
+            self._ensure_state_synced()
+            
+            # Find all Python files
+            all_files = self.analysis_service.find_python_files()
+            
+            # Run coverage analysis
+            coverage_data = self.coverage_service.analyze_coverage(all_files)
+            
+            # Generate and return coverage report
+            return self.coverage_service.generate_coverage_report(coverage_data)
+            
+        except Exception as e:
+            self.feedback.error(f"Coverage analysis failed: {e}")
+            raise
+    
+    def run_status_mode(self) -> str:
+        """Run status mode to show generation history."""
+        try:
+            # Always sync state with existing tests first
+            self._ensure_state_synced()
+            
+            return self.analysis_service.get_generation_status()
+        except Exception as e:
+            self.feedback.error(f"Status retrieval failed: {e}")
+            raise
+    
+    def run_generate_mode(self, llm_credentials: Dict, batch_size: int = 10, 
+                         force: bool = False, dry_run: bool = False, 
+                         streaming: bool = False) -> str:
+        """Run test generation mode."""
+        try:
+            # Always sync state with existing tests first
+            self._ensure_state_synced()
+            
+            # Create LLM client
+            self.feedback.info("Initializing LLM client")
+            llm_client = LLMClientFactory.create_client(
+                claude_api_key=llm_credentials.get('claude_api_key'),
+                claude_model=llm_credentials.get('claude_model', 'claude-3-5-sonnet-20241022'),
+                azure_endpoint=llm_credentials.get('azure_endpoint'),
+                azure_api_key=llm_credentials.get('azure_api_key'), 
+                azure_deployment=llm_credentials.get('azure_deployment'),
+                feedback=self.feedback
+            )
+            
+            # Find all Python files
+            self.feedback.info("Scanning for Python files")
+            all_files = self.analysis_service.find_python_files()
+            
+            # Analyze which files need test generation
+            files_to_process, generation_reasons, coverage_data = self.analysis_service.analyze_files_for_generation(
+                all_files, force
+            )
+            
+            if not files_to_process:
+                self.feedback.success("All files have adequate test coverage! No generation needed.")
+                return "No generation needed - all files have adequate coverage."
+            
+            # Create test plans
+            test_plans = self.analysis_service.create_test_plans(files_to_process, coverage_data)
+            
+            if not test_plans:
+                self.feedback.success("No untested elements found. All code appears to be tested!")
+                return "No untested elements found."
+            
+            # Show what will be processed
+            analysis_report = self.analysis_service.generate_analysis_report(
+                all_files, files_to_process, test_plans, generation_reasons
+            )
+            self.feedback.info(analysis_report)
+            
+            if dry_run:
+                return f"Dry run - would generate tests for {len(test_plans)} files."
+            
+            # Generate directory structure for context
+            directory_structure = self.analysis_service.parser.generate_directory_structure()
+            
+            # Generate tests
+            if streaming:
+                self.feedback.info("Using streaming mode - tests will be written as each file is ready")
+                generated_tests = self.test_generation_service.generate_tests_streaming(
+                    llm_client, test_plans, directory_structure, generation_reasons
+                )
+            else:
+                generated_tests = self.test_generation_service.generate_tests(
+                    llm_client, test_plans, directory_structure, batch_size, generation_reasons
+                )
+            
+            # Measure coverage improvement
+            coverage_improvement = self.test_generation_service.measure_coverage_improvement(
+                files_to_process, coverage_data, self.coverage_service
+            )
+            
+            # Generate final report
+            final_report = self.test_generation_service.generate_final_report(
+                generated_tests, coverage_improvement
+            )
+            
+            # Show summary
+            self.feedback.summary("Test Generation Summary", {
+                "Files processed": len(test_plans),
+                "Tests generated": len(generated_tests),
+                "Coverage before": f"{coverage_improvement.get('before', 0):.1f}%",
+                "Coverage after": f"{coverage_improvement.get('after', 0):.1f}%",
+                "Improvement": f"+{coverage_improvement.get('improvement', 0):.1f}%"
+            })
+            
+            return final_report
+            
+        except Exception as e:
+            self.feedback.error(f"Test generation failed: {e}")
+            raise
+    
+    def run_debug_state_mode(self) -> str:
+        """Run debug state mode to show current state information."""
+        try:
+            return self.analysis_service.debug_test_generation_state()
+        except Exception as e:
+            self.feedback.error(f"State debugging failed: {e}")
+            raise
+    
+    def run_sync_state_mode(self) -> str:
+        """Run sync state mode to sync state with existing tests."""
+        try:
+            return self.analysis_service.sync_state_with_existing_tests()
+        except Exception as e:
+            self.feedback.error(f"State sync failed: {e}")
+            raise
+    
+    def run_reset_state_mode(self) -> str:
+        """Run reset state mode to reset test generation state."""
+        try:
+            return self.analysis_service.reset_generation_state()
+        except Exception as e:
+            self.feedback.error(f"State reset failed: {e}")
+            raise
+    
+    def initialize_config(self, config_file: str = ".testgen.yml") -> str:
+        """Initialize a sample configuration file."""
+        try:
+            self.config.create_sample_config(config_file)
+            return f"Sample configuration created at {config_file}"
+        except Exception as e:
+            self.feedback.error(f"Failed to create configuration: {e}")
+            raise 

@@ -1,0 +1,42 @@
+test_generation:
+  coverage:
+    minimum_branch_coverage: 70
+    minimum_line_coverage: 80
+    regenerate_if_below: 60
+  exclude:
+  - migrations/*
+  - '*/deprecated/*'
+  - __pycache__/*
+  - '*.pyc'
+  exclude_dirs:
+  - my_custom_venv
+  - local_build
+  generation:
+    always_analyze_new_files: true
+    generate_fixtures: true
+    include_docstrings: true
+    max_test_methods_per_class: 20
+    parametrize_similar_tests: true
+  style:
+    assertion_style: assert
+    framework: pytest
+    mock_library: unittest.mock
+  test_patterns:
+  - test_*.py
+  - '*_test.py'
+  - tests/**/test_*.py
+
+# Prompt Engineering Settings (Based on Anthropic 2025 Guidelines)
+prompt_engineering:
+  use_2025_guidelines: true          # Use improved prompts following Anthropic's latest best practices
+  encourage_step_by_step: true       # Include step-by-step reasoning prompts
+  use_positive_negative_examples: true  # Include ✓/✗ examples in prompts
+  minimize_xml_structure: true       # Reduce excessive XML tags in prompts  
+  decisive_recommendations: true     # Encourage single, strong recommendations
+  preserve_uncertainty: false       # Whether to include hedging language (usually False for technical tasks)
+
+# Cost Management
+cost_management:
+  max_daily_cost: 10.0              # Maximum daily spend in USD
+  max_cost_per_request: 2.0         # Maximum cost per individual request
+  enable_content_compression: true   # Remove comments and whitespace to reduce token usage
