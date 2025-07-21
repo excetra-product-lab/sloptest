@@ -21,6 +21,25 @@ Smart Test Generator revolutionizes Python testing by combining **static analysi
 - 🎨 **Professional CLI**: Beautiful command-line interface with Rich library
 - 💰 **Cost Management**: Built-in token usage tracking and cost optimization
 
+## 📋 Table of Contents
+
+- [🚀 Overview](#-overview)
+- [📦 Installation](#-installation)
+- [🚀 Quick Start](#-quick-start)
+- [🔄 Usage Instructions](#-using-in-different-projects)
+- [🛠️ Configuration](#️-configuration)
+- [📊 CLI Commands](#-cli-commands)
+- [🔧 Advanced Usage](#-advanced-usage)
+- [🔧 Troubleshooting](#-troubleshooting)
+- [📚 Examples & Output](#-examples--output)
+- [🛠️ Development Guide](#️-development-guide)
+- [🧪 Testing & Development](#-testing--development)
+- [📈 Performance & Optimization](#-performance--optimization)
+- [🚨 Security](#-security)
+- [🤝 Contributing](#-contributing)
+- [❓ Frequently Asked Questions](#-frequently-asked-questions)
+- [📝 License](#-license)
+
 ## 🏗️ Architecture
 
 ### System Architecture
@@ -339,6 +358,263 @@ smart-test-gen generate --dry-run
 smart-test-gen generate --force
 ```
 
+## 🔄 Using in Different Projects
+
+### Installation Options
+
+#### Option 1: Install as a Package (Recommended)
+
+**From the smart-test-generator directory:**
+```bash
+# Navigate to the smart-test-generator project directory
+cd /path/to/smart-test-generator
+
+# Install the package
+pip install -e .
+# or using uv (faster)
+uv pip install -e .
+```
+
+**From your target project:**
+```bash
+# Navigate to your project directory
+cd /path/to/your/project
+
+# Install directly from the smart-test-generator directory
+pip install -e /path/to/smart-test-generator
+```
+
+#### Option 2: Copy and Customize
+
+Copy the entire `smart-test-generator` project to your target project as a submodule or subdirectory, then install it locally.
+
+### Setup in Your Project
+
+#### 1. Configure API Credentials
+
+Set up your AI provider credentials:
+
+```bash
+# For Claude API (recommended for test generation)
+export CLAUDE_API_KEY="your-claude-api-key-here"
+
+# OR for Azure OpenAI
+export AZURE_OPENAI_ENDPOINT="your-endpoint-url"
+export AZURE_OPENAI_API_KEY="your-api-key"
+export AZURE_OPENAI_DEPLOYMENT="your-deployment-name"
+```
+
+#### 2. Initialize Configuration
+
+In your target project directory:
+
+```bash
+# Create configuration file
+smart-test-gen init-config
+
+# This creates a .testgen.yml file with default settings
+```
+
+#### 3. Customize Configuration
+
+Edit the generated `.testgen.yml` file for your project needs:
+
+```yaml
+test_generation:
+  test_patterns:
+    - "test_*.py"         # Your test file patterns
+    - "*_test.py"
+  exclude_dirs:
+    - "venv"              # Add your specific directories to exclude
+    - "node_modules"      # If you have mixed projects
+    - "build"
+  coverage:
+    minimum_line_coverage: 80
+    minimum_branch_coverage: 70
+
+# Model preferences (Claude Sonnet 4 recommended for quality)
+llm:
+  preferred_model: "claude-sonnet-4-20250514"
+  max_tokens: 4000
+  temperature: 0.1
+
+# Security settings
+security:
+  block_dangerous_patterns: true
+  max_generated_file_size: 50000
+```
+
+### Basic Usage Commands
+
+```bash
+# Navigate to your project
+cd /path/to/your/project
+
+# Analyze your codebase
+smart-test-gen analyze --directory ./src
+
+# Check current test coverage
+smart-test-gen coverage --directory ./src
+
+# Generate missing tests
+smart-test-gen generate --directory ./src
+
+# View generation status and history
+smart-test-gen status
+```
+
+### Advanced Usage Examples
+
+```bash
+# Generate tests with specific model
+smart-test-gen generate --claude-model claude-sonnet-4-20250514
+
+# Dry run to preview what would be generated
+smart-test-gen generate --dry-run --directory ./src
+
+# Force regeneration of all tests
+smart-test-gen generate --force
+
+# Cost-optimized generation
+smart-test-gen generate --cost-optimize --max-cost 5.00
+
+# Batch processing for large codebases
+smart-test-gen generate --batch-size 5
+```
+
+### Project Structure Integration
+
+The tool works with any Python project structure and automatically:
+
+- **Finds Python files** in your source directories
+- **Discovers existing tests** using common patterns
+- **Analyzes test coverage** using pytest or AST fallback
+- **Generates missing tests** only for uncovered code
+- **Preserves existing tests** and builds incrementally
+
+#### Example Integration
+
+For a typical Python project:
+```
+your-project/
+├── src/
+│   └── your_package/
+│       ├── __init__.py
+│       ├── module1.py
+│       └── module2.py
+├── tests/
+│   ├── test_module1.py    # Existing tests
+│   └── test_module2.py    # Will be generated if missing
+├── .testgen.yml           # Configuration file
+└── requirements.txt
+```
+
+### Workflow Integration
+
+#### CI/CD Integration
+
+Add to your CI pipeline:
+
+```yaml
+# .github/workflows/test-generation.yml
+name: Generate Missing Tests
+
+on: [push, pull_request]
+
+jobs:
+  generate-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      - name: Install smart-test-generator
+        run: pip install -e /path/to/smart-test-generator
+      
+      - name: Analyze coverage
+        run: smart-test-gen coverage --directory ./src
+        env:
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+      
+      - name: Generate missing tests
+        run: smart-test-gen generate --directory ./src --dry-run
+        env:
+          CLAUDE_API_KEY: ${{ secrets.CLAUDE_API_KEY }}
+```
+
+#### Pre-commit Hook
+
+```bash
+# Add to .pre-commit-config.yaml
+repos:
+  - repo: local
+    hooks:
+      - id: test-generation-check
+        name: Check test coverage
+        entry: smart-test-gen coverage --directory ./src
+        language: system
+        pass_filenames: false
+```
+
+### Customization for Different Project Types
+
+#### Django Projects
+
+```yaml
+test_generation:
+  test_patterns:
+    - "tests/test_*.py"
+    - "*/tests.py"
+  exclude_dirs:
+    - "migrations"
+    - "staticfiles"
+    - "media"
+  style:
+    framework: pytest
+    assertion_style: assert
+```
+
+#### Flask/FastAPI Projects
+
+```yaml
+test_generation:
+  test_patterns:
+    - "tests/test_*.py"
+    - "test_*.py"
+  exclude_dirs:
+    - "instance"
+    - "static"
+  generation:
+    generate_fixtures: true    # Useful for API testing
+```
+
+#### Data Science Projects
+
+```yaml
+test_generation:
+  test_patterns:
+    - "tests/test_*.py"
+  exclude_dirs:
+    - "data"
+    - "notebooks"
+    - "models"
+  generation:
+    include_docstrings: true   # Important for data science functions
+```
+
+### Best Practices for Different Projects
+
+1. **Start Small**: Begin with a single module or package
+2. **Review Generated Tests**: Always review AI-generated tests before committing
+3. **Iterative Improvement**: Use the tool repeatedly as your code evolves
+4. **Cost Management**: Set cost limits and use batch processing for large codebases
+5. **Quality Focus**: Use the quality analysis features to improve test effectiveness
+6. **Custom Patterns**: Adapt test patterns to match your project's conventions
+7. **Security First**: Enable security features for production projects
+
 ## 🛠️ Configuration
 
 ### Configuration File Structure
@@ -612,18 +888,545 @@ security:
     - "os.system"
 ```
 
+## 🔧 Troubleshooting
+
+### Common Issues
+
+#### Installation Problems
+
+**Issue**: `smart-test-gen: command not found`
+```bash
+# Solution: Ensure the package is installed and in PATH
+pip install -e .
+# or
+uv pip install -e .
+
+# Verify installation
+python -m smart_test_generator --help
+```
+
+**Issue**: Python version compatibility
+```bash
+# Check Python version
+python --version
+
+# Install compatible Python version if needed
+# Use pyenv, conda, or system package manager
+```
+
+#### API Key Issues
+
+**Issue**: Authentication errors
+```bash
+# Verify API key is set
+echo $CLAUDE_API_KEY
+echo $AZURE_OPENAI_API_KEY
+
+# Test API connection
+smart-test-gen generate --dry-run --directory ./src
+```
+
+**Issue**: Where to get API keys
+- **Claude API**: Sign up at [console.anthropic.com](https://console.anthropic.com)
+- **Azure OpenAI**: Set up through Azure Portal under AI + Machine Learning
+
+#### Generation Issues
+
+**Issue**: No tests generated
+```bash
+# Check if files are found
+smart-test-gen analyze --directory ./src --verbose
+
+# Verify test patterns in config
+cat .testgen.yml
+```
+
+**Issue**: Tests not covering expected code
+```bash
+# Run coverage analysis first
+smart-test-gen coverage --directory ./src --verbose
+
+# Check exclusion patterns
+smart-test-gen analyze --directory ./src
+```
+
+#### Performance Issues
+
+**Issue**: Slow generation
+```bash
+# Use smaller batch sizes
+smart-test-gen generate --batch-size 3
+
+# Use faster model
+smart-test-gen generate --claude-model claude-3-5-haiku-20241022
+```
+
+### Debug Mode
+
+Enable verbose logging for troubleshooting:
+
+```bash
+# Enable debug logging
+export SMART_TEST_GEN_DEBUG=1
+smart-test-gen generate --directory ./src --verbose
+
+# Check log files
+ls -la .testgen/logs/
+```
+
+### Getting Help
+
+1. **Check Logs**: Review `.testgen/logs/` for detailed error messages
+2. **Validate Config**: Use `smart-test-gen init-config` to regenerate config
+3. **Test Isolation**: Try with a single file first
+4. **Community**: Open an issue on GitHub with:
+   - Python version
+   - OS information
+   - Complete error message
+   - Configuration file content
+
+## 📚 Examples & Output
+
+### Example Generated Test
+
+**Source Code** (`src/calculator.py`):
+```python
+def add(a, b):
+    """Add two numbers."""
+    return a + b
+
+def divide(a, b):
+    """Divide two numbers."""
+    if b == 0:
+        raise ValueError("Cannot divide by zero")
+    return a / b
+```
+
+**Generated Test** (`tests/test_calculator.py`):
+```python
+import pytest
+from src.calculator import add, divide
+
+class TestAdd:
+    def test_add_positive_numbers(self):
+        """Test adding positive numbers."""
+        result = add(2, 3)
+        assert result == 5
+    
+    def test_add_negative_numbers(self):
+        """Test adding negative numbers."""
+        result = add(-2, -3)
+        assert result == -5
+    
+    def test_add_mixed_numbers(self):
+        """Test adding positive and negative numbers."""
+        result = add(5, -3)
+        assert result == 2
+
+class TestDivide:
+    def test_divide_positive_numbers(self):
+        """Test dividing positive numbers."""
+        result = divide(6, 2)
+        assert result == 3.0
+    
+    def test_divide_by_zero_raises_error(self):
+        """Test that dividing by zero raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot divide by zero"):
+            divide(5, 0)
+    
+    def test_divide_negative_numbers(self):
+        """Test dividing negative numbers."""
+        result = divide(-6, -2)
+        assert result == 3.0
+```
+
+### Sample Coverage Report
+
+```
+Coverage Analysis Results
+=======================
+File: src/calculator.py
+- Lines covered: 4/6 (66.7%)
+- Branches covered: 1/2 (50.0%)
+- Missing coverage: lines 7-8 (error handling)
+
+Recommended Tests:
+✓ Basic functionality tests
+✗ Edge case: division by zero
+✗ Type validation tests
+```
+
+## 🛠️ Development Guide
+
+### Prerequisites for Development
+
+- Python 3.8+
+- Git
+- Virtual environment tool (venv, conda, or virtualenv)
+
+### Development Environment Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/yourusername/smart-test-generator.git
+cd smart-test-generator
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install development dependencies
+uv pip install -e ".[dev]"
+# or
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+
+# Verify setup
+smart-test-gen --help
+pytest --version
+```
+
+### Project Structure for Developers
+
+```
+smart-test-generator/
+├── src/smart_test_generator/      # Main package
+│   ├── cli.py                     # Command-line interface
+│   ├── config.py                  # Configuration management
+│   ├── core/                      # Core application logic
+│   ├── analysis/                  # Code analysis components
+│   ├── generation/                # Test generation components
+│   ├── services/                  # Service layer
+│   └── utils/                     # Utility functions
+├── tests/                         # Test suite
+├── pyproject.toml                 # Package configuration
+└── README.md                      # This file
+```
+
+### Development Workflow
+
+#### 1. Making Changes
+
+```bash
+# Create feature branch
+git checkout -b feature/your-feature-name
+
+# Make changes
+# Edit code...
+
+# Run tests
+pytest
+
+# Check code quality
+black src/ tests/
+ruff check src/ tests/
+mypy src/
+```
+
+#### 2. Testing Your Changes
+
+```bash
+# Run all tests
+pytest
+
+# Run specific test categories
+pytest tests/analysis/          # Analysis tests
+pytest tests/generation/        # Generation tests
+pytest tests/services/          # Service tests
+
+# Run with coverage
+pytest --cov=src/smart_test_generator --cov-report=html
+
+# Test the CLI manually
+smart-test-gen generate --dry-run --directory ./tests/fixtures/
+```
+
+#### 3. Debugging
+
+```bash
+# Enable debug mode
+export SMART_TEST_GEN_DEBUG=1
+
+# Run with verbose output
+smart-test-gen generate --directory ./src --verbose
+
+# Use Python debugger
+python -m pdb -m smart_test_generator.cli generate --directory ./src
+
+# Check logs
+tail -f .testgen/logs/smart_test_generator.log
+```
+
+### Adding New Features
+
+#### 1. New Analysis Components
+
+```python
+# src/smart_test_generator/analysis/my_analyzer.py
+from smart_test_generator.analysis.base_analyzer import BaseAnalyzer
+
+class MyAnalyzer(BaseAnalyzer):
+    def analyze(self, source_code: str, file_path: str) -> AnalysisResult:
+        # Your analysis logic
+        return AnalysisResult(...)
+```
+
+#### 2. New LLM Providers
+
+```python
+# src/smart_test_generator/generation/my_llm_client.py
+from smart_test_generator.generation.base_llm_client import BaseLLMClient
+
+class MyLLMClient(BaseLLMClient):
+    def generate_tests(self, prompt: str) -> str:
+        # Your LLM integration
+        return generated_test_code
+```
+
+#### 3. New CLI Commands
+
+```python
+# Add to src/smart_test_generator/cli.py
+def add_my_command_parser(subparsers):
+    parser = subparsers.add_parser('my-command', help='My new command')
+    parser.add_argument('--option', help='Command option')
+    parser.set_defaults(func=handle_my_command)
+
+def handle_my_command(args):
+    # Command implementation
+    pass
+```
+
+### Testing Guidelines
+
+#### Writing Tests
+
+1. **Unit Tests**: Test individual components in isolation
+2. **Integration Tests**: Test component interactions
+3. **End-to-End Tests**: Test complete workflows
+4. **Mock External Dependencies**: Use mocks for LLM APIs
+
+```python
+# Example test structure
+def test_my_feature():
+    # Arrange
+    input_data = create_test_data()
+    
+    # Act
+    result = my_feature(input_data)
+    
+    # Assert
+    assert result.is_valid()
+    assert result.output == expected_output
+```
+
+#### Test Fixtures
+
+```python
+# tests/conftest.py
+import pytest
+
+@pytest.fixture
+def sample_python_file():
+    return """
+def add(a, b):
+    return a + b
+"""
+
+@pytest.fixture
+def mock_llm_client():
+    # Return mocked LLM client
+    pass
+```
+
+### Code Quality Standards
+
+- **Code Formatting**: Use `black` with 100-character line length
+- **Linting**: Use `ruff` for fast Python linting
+- **Type Checking**: Use `mypy` for static type analysis
+- **Documentation**: Use clear docstrings and type hints
+- **Test Coverage**: Maintain >85% test coverage
+
+### Release Process
+
+1. **Update Version**: Modify version in `pyproject.toml`
+2. **Update Changelog**: Document changes
+3. **Run Full Test Suite**: `pytest`
+4. **Build Package**: `python -m build`
+5. **Create Release**: Tag and push to GitHub
+6. **Publish**: Upload to PyPI (if applicable)
+
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details on:
+We welcome contributions! Here's how to get involved:
 
-- Code of Conduct
-- Development setup
-- Pull request process
-- Issue reporting
+### Quick Contribution Guide
+
+1. **Fork** the repository on GitHub
+2. **Clone** your fork locally
+3. **Create** a feature branch: `git checkout -b feature/your-feature-name`
+4. **Make** your changes following our code standards
+5. **Test** your changes thoroughly
+6. **Commit** with clear, descriptive messages
+7. **Push** to your fork and **submit** a pull request
+
+### Types of Contributions
+
+- 🐛 **Bug Reports**: Found an issue? Open a GitHub issue with details
+- 💡 **Feature Requests**: Have an idea? Describe it in a GitHub issue
+- 🔧 **Code Contributions**: Fix bugs or implement new features
+- 📖 **Documentation**: Improve README, docstrings, or examples
+- 🧪 **Testing**: Add test cases or improve test coverage
+- 🎨 **UI/UX**: Improve CLI interface or user experience
+
+### Development Setup
+
+See the **🛠️ Development Guide** section above for complete setup instructions.
+
+### Coding Standards
+
+- Follow **PEP 8** Python style guidelines
+- Use **type hints** for all function parameters and return values
+- Write **comprehensive docstrings** for all public methods
+- Maintain **>85% test coverage** for new code
+- Use **clear, descriptive variable names**
+
+### Pull Request Guidelines
+
+#### Before Submitting
+
+```bash
+# Ensure all tests pass
+pytest
+
+# Check code formatting
+black src/ tests/
+ruff check src/ tests/
+
+# Verify type checking
+mypy src/
+
+# Test your changes manually
+smart-test-gen generate --dry-run --directory ./tests/fixtures/
+```
+
+#### PR Description Template
+
+```markdown
+## Description
+Brief description of changes made.
+
+## Type of Change
+- [ ] Bug fix (non-breaking change that fixes an issue)
+- [ ] New feature (non-breaking change that adds functionality)
+- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
+- [ ] Documentation update
+
+## Testing
+- [ ] I have added tests that prove my fix is effective or that my feature works
+- [ ] New and existing unit tests pass locally with my changes
+- [ ] I have tested the CLI commands manually
+
+## Checklist
+- [ ] My code follows the style guidelines of this project
+- [ ] I have performed a self-review of my own code
+- [ ] I have commented my code, particularly in hard-to-understand areas
+- [ ] I have made corresponding changes to the documentation
+- [ ] My changes generate no new warnings
+```
+
+### Issue Reporting
+
+When reporting bugs, please include:
+
+- **Python version** and OS
+- **Complete error message** and stack trace
+- **Steps to reproduce** the issue
+- **Configuration file** content (remove sensitive data)
+- **Sample code** that triggers the bug
+
+### Community Guidelines
+
+- **Be respectful** and constructive in all interactions
+- **Search existing issues** before creating new ones
+- **Provide clear, detailed descriptions** in issues and PRs
+- **Follow up** on your contributions and respond to feedback
+- **Help others** by reviewing PRs and answering questions
+
+For more details, see our [Contributing Guidelines](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## ❓ Frequently Asked Questions
+
+### General Usage
+
+**Q: How does Smart Test Generator differ from other test generation tools?**
+A: Smart Test Generator focuses on incremental improvement by analyzing existing coverage and only generating tests for uncovered code. It uses advanced AST analysis and AI-powered generation with quality assessment, unlike simple template-based generators.
+
+**Q: Which AI model should I use?**
+A: For best quality, use `claude-sonnet-4-20250514`. For cost optimization, use `claude-3-5-haiku-20241022`. Azure OpenAI models are also supported for enterprise users.
+
+**Q: Can I use this with existing test suites?**
+A: Yes! The tool is designed to work with existing tests. It analyzes your current test coverage and only generates tests for uncovered code, preserving your existing work.
+
+**Q: How much does it cost to generate tests?**
+A: Costs depend on your codebase size and chosen model. Use `--cost-optimize` and `--max-cost` flags to control spending. Typical costs range from $0.10-$2.00 per file depending on complexity.
+
+### Technical Questions
+
+**Q: What Python versions are supported?**
+A: Python 3.8+ is required. The tool uses modern Python features and typing.
+
+**Q: Does it work with different testing frameworks?**
+A: Currently supports pytest and unittest. The generated tests can be configured for either framework in the `.testgen.yml` configuration.
+
+**Q: Can I customize the generated test patterns?**
+A: Yes! Configure `test_patterns`, `style.framework`, `style.assertion_style`, and other settings in your `.testgen.yml` file.
+
+**Q: How does coverage analysis work without running tests?**
+A: The tool uses pytest integration for accurate coverage when possible, but falls back to AST-based analysis to estimate coverage by analyzing imports and test patterns.
+
+**Q: Can I extend the tool with custom analyzers?**
+A: Yes! See the **🔧 Advanced Usage** section for examples of creating custom quality analyzers and mutation operators.
+
+### Troubleshooting
+
+**Q: Why aren't any tests being generated?**
+A: Check that:
+1. Files are found: `smart-test-gen analyze --directory ./src`
+2. API keys are set: `echo $CLAUDE_API_KEY`
+3. Configuration is correct: `cat .testgen.yml`
+4. Files aren't excluded by patterns
+
+**Q: The tool is running slowly. How can I speed it up?**
+A: Try:
+- Smaller batch sizes: `--batch-size 3`
+- Faster model: `--claude-model claude-3-5-haiku-20241022`
+- Cost optimization: `--cost-optimize`
+- Exclude large directories in configuration
+
+**Q: How do I handle API rate limits?**
+A: The tool includes automatic rate limiting and retry logic. Use smaller batch sizes and the `--cost-optimize` flag to reduce API usage.
+
+**Q: Can I run this in CI/CD?**
+A: Yes! See the **Workflow Integration** section for GitHub Actions and pre-commit hook examples. Use `--dry-run` for validation without making changes.
+
+### Security & Privacy
+
+**Q: Is my code sent to AI providers?**
+A: Yes, code is sent to generate tests. Use the security settings to block sensitive patterns, and review the generated tests before committing. Consider using Azure OpenAI for enhanced privacy controls.
+
+**Q: How can I prevent dangerous code generation?**
+A: Enable `block_dangerous_patterns: true` in configuration and review all generated tests. The tool includes AST validation to prevent malicious code.
+
+**Q: Can I use this with proprietary/confidential code?**
+A: Consider using Azure OpenAI with private endpoints for enhanced security. Always review your organization's AI usage policies before processing confidential code.
+
 ---
 
 Made with ❤️ for the Python testing community
