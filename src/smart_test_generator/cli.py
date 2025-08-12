@@ -98,6 +98,14 @@ def setup_argparse() -> argparse.ArgumentParser:
         help="Claude model to use"
     )
 
+    # AWS Bedrock arguments
+    parser.add_argument("--bedrock-model-id", help="AWS Bedrock model ID (e.g., anthropic.claude-3-5-sonnet-20240620-v1:0)")
+    parser.add_argument("--bedrock-region", default="us-east-1", help="AWS region for Bedrock (default: us-east-1)")
+    parser.add_argument("--bedrock-profile", help="AWS profile name to use (optional)")
+    parser.add_argument("--bedrock-credentials-path", help="Path that should contain AWS credentials (file or directory)")
+    parser.add_argument("--bedrock-pcl-command", help="Command to run (PCL) to set credentials if missing")
+    parser.add_argument("--bedrock-pcl-input", action="append", default=[], help="Key=Value input to pass into the PCL command (can be repeated)")
+
     # Common arguments
     parser.add_argument(
         "--force",
@@ -477,8 +485,22 @@ def extract_llm_credentials(args) -> dict:
         'claude_model': args.claude_model,
         'azure_endpoint': args.endpoint,
         'azure_api_key': args.api_key,
-        'azure_deployment': args.deployment
+        'azure_deployment': args.deployment,
+        'bedrock_model_id': getattr(args, 'bedrock_model_id', None),
+        'bedrock_region': getattr(args, 'bedrock_region', None),
+        'bedrock_profile': getattr(args, 'bedrock_profile', None),
+        'bedrock_credentials_path': getattr(args, 'bedrock_credentials_path', None),
+        'bedrock_pcl_command': getattr(args, 'bedrock_pcl_command', None),
+        'bedrock_pcl_inputs': _parse_key_values(getattr(args, 'bedrock_pcl_input', [])),
     }
+
+def _parse_key_values(items):
+    parsed = {}
+    for item in items or []:
+        if '=' in item:
+            key, value = item.split('=', 1)
+            parsed[key.strip()] = value.strip()
+    return parsed
 
 
 def handle_init_config_mode(args, feedback: UserFeedback):
@@ -586,16 +608,24 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             # Validate LLM credentials first
             llm_credentials = extract_llm_credentials(args)
             
-            if not llm_credentials.get('claude_api_key'):
+            # Require at least one: Claude, Azure, or Bedrock
+            if not (llm_credentials.get('claude_api_key') or llm_credentials.get('azure_endpoint') and llm_credentials.get('azure_api_key') and llm_credentials.get('azure_deployment') or llm_credentials.get('bedrock_model_id')):
                 feedback.error(
-                    "Claude API key is required for test generation",
-                    "Set CLAUDE_API_KEY environment variable or use --claude-api-key argument"
+                    "No LLM credentials provided",
+                    "Provide Claude API key, Azure OpenAI credentials, or AWS Bedrock model ID"
                 )
                 sys.exit(1)
             
             # Enhanced generation configuration display
+            ai_model_label = (
+                llm_credentials['claude_model'] if llm_credentials.get('claude_api_key') else (
+                    f"Azure:{llm_credentials.get('azure_deployment')}" if llm_credentials.get('azure_endpoint') else (
+                        f"Bedrock:{llm_credentials.get('bedrock_model_id')}"
+                    )
+                )
+            )
             generation_config = {
-                "AI Model": llm_credentials['claude_model'],
+                "AI Model": ai_model_label,
                 "Processing Mode": "Streaming" if args.streaming else f"Batch ({args.batch_size} files)",
                 "Force Regeneration": "Yes" if args.force else "No",
                 "Dry Run": "Yes" if args.dry_run else "No"
@@ -606,7 +636,7 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             if args.dry_run:
                 feedback.warning("Running in DRY RUN mode - no files will be modified")
             
-            feedback.sophisticated_progress("Initializing AI test generation", f"Using {llm_credentials['claude_model']}")
+            feedback.sophisticated_progress("Initializing AI test generation", f"Using {ai_model_label}")
             
             # Generate tests with sophisticated progress tracking
             result = app.run_generate_mode(

@@ -12,6 +12,14 @@ from pathlib import Path
 
 from smart_test_generator.exceptions import LLMClientError, AuthenticationError
 
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, NoCredentialsError
+except Exception:  # pragma: no cover - optional dependency handled at runtime
+    boto3 = None
+    BotoCoreError = Exception
+    NoCredentialsError = Exception
+
 logger = logging.getLogger(__name__)
 
 
@@ -291,6 +299,145 @@ class LLMClient(ABC):
                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
         """Generate unit tests for the provided code."""
         pass
+
+
+class BedrockClient(LLMClient):
+    """Client for interacting with AWS Bedrock via boto3 runtime."""
+
+    def __init__(self, model_id: str, region: str = "us-east-1", profile: str = None, cost_manager=None):
+        if boto3 is None:
+            raise LLMClientError(
+                "boto3 is not installed",
+                suggestion="Install with: pip install boto3"
+            )
+
+        session_kwargs = {}
+        if profile:
+            session_kwargs["profile_name"] = profile
+
+        try:
+            session = boto3.Session(**session_kwargs)
+            self.client = session.client("bedrock-runtime", region_name=region)
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to initialize Bedrock client: {e}",
+                suggestion="Ensure AWS credentials exist and region/profile are correct."
+            )
+
+        self.model_id = model_id
+        self.region = region
+        self.profile = profile
+        self.cost_manager = cost_manager
+
+    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str,
+                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
+        """Generate unit tests using Bedrock Converse/Invoke API, assuming Claude on Bedrock."""
+        # Extract codebase information for validation
+        codebase_info = {}
+        if source_files and project_root:
+            codebase_info = extract_codebase_imports(source_files, project_root)
+
+        validation_context = ""
+        if codebase_info:
+            validation_context = f"""
+
+AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
+{json.dumps(codebase_info.get('imports', {}), indent=2)}
+
+CLASS_SIGNATURES (Required fields for dataclasses):
+{json.dumps(codebase_info.get('classes', {}), indent=2)}"""
+
+        user_content = f"""<directory_structure>
+{directory_structure}
+</directory_structure>
+
+<code_files>
+{xml_content}
+</code_files>{validation_context}
+
+Generate comprehensive unit tests for each file in the code_files section above."""
+
+        # Bedrock message format for Claude models
+        messages = [
+            {"role": "user", "content": [{"type": "text", "text": system_prompt}]},
+            {"role": "user", "content": [{"type": "text", "text": user_content}]},
+        ]
+
+        try:
+            response = self.client.converse(
+                modelId=self.model_id,
+                messages=messages,
+                inferenceConfig={
+                    "maxTokens": 16000,
+                    "temperature": 0.3,
+                },
+                additionalModelRequestFields={
+                    "response_format": {"type": "json_object"}
+                }
+            )
+
+            # Extract text from response
+            outputs = response.get("output", {}).get("message", {}).get("content", [])
+            text_parts = [p.get("text", "") for p in outputs if p.get("type") == "text"]
+            content = "\n".join(text_parts).strip() if text_parts else ""
+
+            tests_dict = json.loads(content) if content else {}
+
+            if codebase_info and tests_dict:
+                available_imports = codebase_info.get('imports', {})
+                validated_tests = {}
+                for filepath, test_content in tests_dict.items():
+                    is_valid, errors = validate_generated_test(test_content, filepath, available_imports, None)
+                    if is_valid:
+                        validated_tests[filepath] = test_content
+                    else:
+                        logger.warning(f"Generated test for {filepath} has validation errors: {errors}")
+                        fixed_content = self._attempt_basic_fixes(test_content, errors)
+                        if fixed_content:
+                            is_valid_fixed, _ = validate_generated_test(fixed_content, filepath, available_imports, None)
+                            if is_valid_fixed:
+                                validated_tests[filepath] = fixed_content
+                            else:
+                                logger.error(f"Could not auto-fix test for {filepath}")
+                        else:
+                            logger.error(f"Skipping invalid test for {filepath}")
+                return validated_tests
+
+            return tests_dict
+        except (BotoCoreError, NoCredentialsError) as e:
+            raise AuthenticationError(
+                f"AWS Bedrock authentication failed: {e}",
+                suggestion="Ensure AWS credentials are configured (env, config/credentials files, or SSO)."
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {e}")
+            return {}
+        except Exception as e:
+            raise LLMClientError(
+                f"Bedrock request failed: {e}",
+                suggestion="Verify model ID, region, and permissions for Bedrock use."
+            )
+
+    def _attempt_basic_fixes(self, content: str, errors: List[str]) -> str:
+        try:
+            if "mock.get.return_value = Mock" in content:
+                content = content.replace("mock.get.return_value = Mock", "mock.get.return_value = []")
+            if "mock_config.get(" in content and "return_value" not in content:
+                import_section = content.split("def test_")[0] if "def test_" in content else content[:500]
+                if "mock_config = Mock()" in import_section and "mock_config.get.return_value" not in import_section:
+                    content = content.replace(
+                        "mock_config = Mock()",
+                        "mock_config = Mock()\nmock_config.get.return_value = []"
+                    )
+            if "ANY" in content and "from unittest.mock import" in content and "ANY" not in content.split("from unittest.mock import")[1].split("\n")[0]:
+                content = content.replace(
+                    "from unittest.mock import",
+                    "from unittest.mock import ANY,"
+                )
+            compile(content, "test_fix_validation", 'exec', dont_inherit=True, optimize=0)
+            return content
+        except:
+            return None
 
 
 class AzureOpenAIClient(LLMClient):
