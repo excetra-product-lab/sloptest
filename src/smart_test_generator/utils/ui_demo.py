@@ -1,134 +1,121 @@
-"""Demo script to showcase the world-class CLI interface features."""
+"""Demo utilities to showcase the world-class CLI UI."""
 
 import time
 from pathlib import Path
-from smart_test_generator.utils.user_feedback import UserFeedback, ProgressTracker
+
+from .user_feedback import UserFeedback, ProgressTracker
 
 
-def demo_world_class_ui():
-    """Demonstrate the world-class terminal UI."""
-    print("\n" + "="*80)
-    print("🚀 WORLD-CLASS TERMINAL UI DEMONSTRATION")
-    print("="*80)
-    
-    feedback = UserFeedback(verbose=False, quiet=False)
-    
-    # 1. Branded Header
-    feedback.brand_header("Test Generation Demo")
-    
-    # 2. Execution Summary (like premium CLIs)
-    config = {
-        "Mode": "Generate",
-        "AI Model": "claude-sonnet-4-20250514", 
-        "Directory": "./src",
-        "Batch Size": "10 files",
-        "Processing": "Streaming",
-        "Force Mode": "No"
-    }
-    feedback.execution_summary("generation", config)
-    
-    # 3. Sophisticated Progress Updates
-    feedback.sophisticated_progress("Initializing AI test generation", "Connecting to Claude API")
-    time.sleep(1)
-    
-    feedback.sophisticated_progress("Scanning Python files", "Found 23 files, analyzing structure")
-    time.sleep(1)
-    
-    feedback.sophisticated_progress("Analyzing test coverage", "Current coverage: 67%, target: 80%")
-    time.sleep(1)
-    
-    # 4. Status Spinner for Operations
-    with feedback.status_spinner("Generating tests with AI", spinner_style="arc"):
-        time.sleep(2)
-    
-    # 5. Professional Status Table
-    validation_items = [
-        ("success", "File Analysis", "23 Python files scanned"),
-        ("success", "Coverage Check", "67% baseline coverage detected"), 
-        ("success", "AI Model", "Claude Sonnet connected"),
-        ("running", "Test Generation", "Processing batch 2/3"),
-        ("pending", "Quality Check", "Awaiting completion")
+def demo_world_class_ui() -> None:
+    """Showcase the CLI features for demos and manual testing.
+
+    This function intentionally focuses on calling the UI API to demonstrate
+    capabilities; business logic is mocked.
+    """
+    feedback = UserFeedback(verbose=True)
+
+    feedback.section_header("CLI Interface Showcase")
+
+    # Feature showcase
+    features = [
+        "Professional status indicators",
+        "Beautiful progress tracking",
+        "Rich table displays",
+        "File tree visualization",
+        "Elegant panels and summaries",
     ]
-    feedback.status_table("🔍 Generation Status", validation_items)
-    
-    time.sleep(1)
-    
-    # 6. More sophisticated progress
-    feedback.sophisticated_progress("Processing batch 2/3", "Generating tests for core modules")
-    time.sleep(1)
-    
-    feedback.sophisticated_progress("Processing batch 3/3", "Finalizing utility tests")
-    time.sleep(1)
-    
-    # 7. Completion Celebration (World-class finale)
-    completion_stats = {
-        "Files Processed": "23",
-        "Tests Generated": "156", 
-        "Coverage Improvement": "+18% (67% → 85%)",
-        "Execution Time": "3m 42s",
-        "Quality Score": "94/100"
+    feedback.feature_showcase(features)
+    feedback.divider("Status Table Demo")
+
+    # Status messages
+    feedback.subsection_header("Status Messages")
+    feedback.success("This is a success message")
+    feedback.info("This is an informational message")
+    feedback.warning("This is a warning message", "Consider taking this action")
+    feedback.debug("This is a debug message (only shown in verbose mode)")
+
+    # Tables
+    validation_items = [
+        ("success", "System Check", "All requirements met"),
+        ("success", "Dependencies", "All packages available"),
+        ("warning", "Configuration", "Using default settings"),
+        ("running", "File Analysis", "Scanning project files"),
+        ("pending", "Test Generation", "Waiting for analysis"),
+    ]
+    feedback.status_table("Project Status", validation_items)
+    feedback.divider("Configuration Panel Demo")
+
+    # Summary panel (configuration)
+    config_info = {
+        "Project Root": "/path/to/project",
+        "Test Directory": "tests/",
+        "Coverage Threshold": "80%",
+        "Model": "claude-sonnet-4",
+        "Batch Size": "10 files",
+        "Force Regeneration": "No",
     }
-    
-    feedback.completion_celebration("Test Generation", completion_stats, "3m 42s")
-    
-    print("\n" + "="*80)
-    print("✨ WORLD-CLASS UI FEATURES DEMONSTRATED:")
-    print("• Branded professional header with version")
-    print("• Sophisticated execution planning") 
-    print("• Context-aware progress updates")
-    print("• Premium status tables and spinners")
-    print("• Celebratory completion with statistics")
-    print("• Enterprise-grade visual design")
-    print("• Consistent color-coded information hierarchy")
-    print("="*80)
+    feedback.summary_panel("Current Configuration", config_info, "blue")
 
+    # Progress tracking
+    feedback.divider("Progress Tracking Demo")
+    tracker = ProgressTracker(feedback)
+    tracker.set_total_steps(6, "Setup Progress")
+    for step in [
+        "Initializing system",
+        "Scanning Python files",
+        "Analyzing code structure",
+        "Calculating coverage",
+        "Planning test generation",
+        "Finalizing setup",
+    ]:
+        tracker.step(step)
+        time.sleep(0.5)
+    tracker.complete("Setup completed successfully!")
 
-def compare_ui_levels():
-    """Compare basic vs world-class UI approaches."""
-    print("\n" + "="*80)
-    print("📊 UI COMPARISON: Basic vs World-Class")
-    print("="*80)
-    
-    print("\n🔹 BASIC CLI APPROACH:")
-    print("Processing files...")
-    print("Files processed: 23")
-    print("Tests generated: 156") 
-    print("Done.")
-    
-    print("\n🔸 WORLD-CLASS CLI APPROACH:")
-    
-    feedback = UserFeedback(verbose=False, quiet=False)
-    feedback.brand_header("Enterprise Test Generation")
-    
-    feedback.execution_summary("production", {
-        "Target": "./enterprise-app",
-        "AI Model": "claude-sonnet-4-20250514",
-        "Quality Target": "95%",
-        "Processing": "Parallel batching"
-    })
-    
-    feedback.sophisticated_progress("Initializing enterprise-grade generation", "Multi-threaded processing")
-    
-    with feedback.status_spinner("Processing with AI assistance"):
-        time.sleep(1)
-    
-    feedback.completion_celebration("Enterprise Generation", {
-        "Files Processed": "23",
-        "Tests Generated": "156",
-        "Coverage Improvement": "+18%",
-        "Quality Score": "95/100"
-    })
-    
-    print("\n💎 The difference is clear - world-class UIs create confidence and trust!")
+    # File tree demo
+    feedback.divider("File Tree Demo")
+    files = [
+        Path("src/smart_test_generator/__init__.py"),
+        Path("src/smart_test_generator/cli.py"),
+        Path("src/smart_test_generator/config.py"),
+        Path("src/smart_test_generator/core/application.py"),
+        Path("src/smart_test_generator/core/llm_factory.py"),
+        Path("src/smart_test_generator/utils/user_feedback.py"),
+        Path("src/smart_test_generator/services/analysis_service.py"),
+        Path("tests/test_cli.py"),
+        Path("tests/test_config.py"),
+    ]
+    feedback.file_tree("Project Structure", files, base_path=Path("src"))
 
+    # Spinner demo
+    feedback.divider("Spinner Demo")
+    with feedback.status_spinner("Processing large dataset", spinner_style="dots12"):
+        time.sleep(2)
+    feedback.success("Processing completed!")
+    with feedback.status_spinner("Generating AI responses", spinner_style="arc"):
+        time.sleep(1.5)
+    feedback.success("Generation completed!")
 
-if __name__ == "__main__":
-    demo_world_class_ui()
-    
-    input("\n🎯 Press Enter to see Basic vs World-Class comparison...")
-    compare_ui_levels()
-    
-    print(f"\n{'='*80}")
-    print("🏆 WORLD-CLASS TERMINAL UI COMPLETE")
-    print("Your Smart Test Generator now rivals premium enterprise tools!")
-    print(f"{'='*80}") 
+    # Operation status
+    feedback.divider("Operation Status Demo")
+    operations = {
+        "File Discovery": "completed",
+        "Code Analysis": "completed",
+        "Coverage Calculation": "running",
+        "Test Planning": "pending",
+        "Quality Assessment": "pending",
+    }
+    feedback.operation_status(operations)
+
+    # Final summary
+    feedback.divider("Final Summary")
+    final = {
+        "Demo Mode": "Interactive Showcase",
+        "Features Demonstrated": "8 categories",
+        "Status": "All features working",
+        "Performance": "Excellent",
+    }
+    feedback.summary_panel("Demo Summary", final, "green")
+    feedback.success("CLI interface showcase completed!")
+    feedback.info("Ready for production use with beautiful, professional interface")
+

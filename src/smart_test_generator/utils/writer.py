@@ -2,11 +2,24 @@
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
+from dataclasses import dataclass
+import os
+import tempfile
+import difflib
 
 from smart_test_generator.config import Config
+from smart_test_generator.utils.ast_merge import merge_modules
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MergeResult:
+    changed: bool
+    strategy_used: str
+    diff: Optional[str] = None
+    actions: Optional[List[str]] = None
 
 
 class TestFileWriter:
@@ -88,3 +101,106 @@ class TestFileWriter:
             logger.info(f"Updated test file: {test_path}")
         except Exception as e:
             logger.error(f"Failed to update test file {test_path}: {e}")
+
+    def write_or_merge_test_file(
+        self,
+        source_path: str,
+        new_source: str,
+        *,
+        strategy: str = 'append',
+        dry_run: bool = False,
+    ) -> 'MergeResult':
+        """Write or merge test content according to configured strategy.
+
+        - Determines test path from source_path
+        - Reads existing content if present
+        - Computes merged output per strategy ('append' | 'replace' | 'ast-merge')
+        - Optionally formats output (formatter: 'black' | 'none')
+        - Returns MergeResult with changed flag, actions, and optional unified diff
+        - When not dry_run and a change is needed, writes atomically
+        """
+        test_path = self.determine_test_path(source_path)
+        full_test_path = self.root_dir / test_path
+
+        full_test_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Read existing content if present
+        if full_test_path.exists():
+            try:
+                existing_text = full_test_path.read_text(encoding='utf-8')
+            except Exception:
+                existing_text = ''
+        else:
+            existing_text = ''
+
+        # Compute desired output text and actions according to strategy
+        actions: List[str] = []
+        output_text: str
+
+        if strategy == 'ast-merge':
+            merged_text, merge_actions = merge_modules(existing_text, new_source)
+            output_text = merged_text
+            actions = merge_actions or ["merge"]
+        elif strategy == 'replace':
+            output_text = new_source
+            actions = ["replace"] if existing_text else ["create"]
+        else:
+            # Default/fallback to append
+            separator = "\n\n" if existing_text and not existing_text.endswith("\n\n") else "\n\n"
+            output_text = (existing_text + separator + new_source) if existing_text else new_source
+            actions = ["append"] if existing_text else ["create"]
+            strategy = 'append' if strategy not in ('append', 'replace', 'ast-merge') else strategy
+
+        # Optional formatting via Black
+        try:
+            formatter = (self.config.get('test_generation.generation.merge.formatter', 'none')
+                         if isinstance(getattr(self.config, 'config', {}), dict) else 'none')
+        except Exception:
+            formatter = 'none'
+
+        if formatter == 'black':
+            try:
+                import black  # type: ignore
+                output_text = black.format_str(output_text, mode=black.FileMode())
+            except Exception:
+                # If Black is unavailable or fails, proceed without formatting
+                pass
+
+        # Determine change and diff
+        changed = (existing_text != output_text)
+        diff_text: Optional[str] = None
+        if dry_run:
+            diff_text = "".join(
+                difflib.unified_diff(
+                    existing_text.splitlines(keepends=True),
+                    output_text.splitlines(keepends=True),
+                    fromfile=str(test_path),
+                    tofile=str(test_path),
+                )
+            )
+
+        if dry_run:
+            # Only report what would happen
+            action_label = actions or (["noop"] if not changed else ["update"])
+            log_msg = f"[dry-run] {('No changes' if not changed else 'Would update')} {test_path} via {strategy}"
+            logger.info(log_msg)
+            return MergeResult(changed=changed, strategy_used=strategy, diff=diff_text, actions=action_label)
+
+        # Not dry-run: write if changed
+        if not changed:
+            logger.info(f"No changes for {test_path} (strategy={strategy})")
+            return MergeResult(changed=False, strategy_used=strategy, actions=["noop"]) 
+
+        # Perform atomic write to avoid partial writes
+        try:
+            tmp_dir = str(full_test_path.parent)
+            with tempfile.NamedTemporaryFile('w', delete=False, dir=tmp_dir, prefix='.tmp_', suffix=full_test_path.suffix, encoding='utf-8') as tmp:
+                tmp.write(output_text)
+                tmp_path = tmp.name
+            os.replace(tmp_path, full_test_path)
+            logger.info(f"Updated test file: {test_path} (strategy={strategy})")
+        except Exception as e:
+            logger.error(f"Failed to write {test_path} atomically: {e}")
+            raise
+
+        return MergeResult(changed=True, strategy_used=strategy, actions=actions)

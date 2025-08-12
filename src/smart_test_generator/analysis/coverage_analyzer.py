@@ -6,6 +6,7 @@ import json
 import subprocess
 import ast
 import logging
+import platform
 from pathlib import Path
 from typing import Dict, List, Tuple, Set, Optional, Union
 
@@ -298,6 +299,16 @@ class CoverageAnalyzer:
     def run_coverage_analysis(self, source_files: List[str], test_files: List[str] = None) -> Dict[str, TestCoverage]:
         """Run pytest with coverage to get detailed metrics, fallback to AST analysis."""
         try:
+            # Preflight checks for environment robustness
+            preflight = self.preflight_check()
+            if preflight.get("status") != "ok":
+                # Log guidance but continue (we will likely fall back to AST)
+                for msg in preflight.get("messages", []):
+                    logger.warning(msg)
+                # If pytest is not importable, raise to trigger AST fallback immediately
+                if not preflight.get("pytest_importable", False):
+                    raise Exception("pytest not importable in current interpreter")
+
             # Try to run pytest with coverage first
             logger.info("Attempting pytest coverage analysis...")
             coverage_map = self._run_pytest_coverage(source_files)
@@ -322,22 +333,99 @@ class CoverageAnalyzer:
 
     def _run_pytest_coverage(self, source_files: List[str]) -> Dict[str, TestCoverage]:
         """Run pytest with coverage analysis."""
-        cmd = [
-            sys.executable, "-m", "pytest",
-            "--cov=" + str(self.project_root),
-            "--cov-report=term-missing",
-            "-q"
-        ]
+        # Build command and environment from configuration
+        from smart_test_generator.analysis.coverage.command_builder import build_pytest_command
+        from smart_test_generator.analysis.coverage.runner import run_pytest
+        from smart_test_generator.analysis.coverage.errors import parse_errors
 
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=self.project_root)
+        spec = build_pytest_command(project_root=self.project_root, config=self.config, preflight_result=None)
+
+        run_result = run_pytest(spec)
 
         # Check if .coverage file was created
         coverage_file = self.project_root / ".coverage"
         if coverage_file.exists():
             return self._parse_coverage_file(coverage_file, source_files)
         else:
-            logger.warning("No .coverage file created - tests may not exist yet")
-            raise Exception("No coverage file generated")
+            logger.warning("No .coverage file created - tests may not exist yet or pytest failed")
+            # Provide actionable guidance using error parser
+            report = parse_errors(run_result, self.preflight_check())
+            for line in report.excerpts[-20:]:  # log tail for context
+                logger.debug(line)
+            guidance_text = "; ".join(report.guidance) if report.guidance else "See pytest output for details"
+            from smart_test_generator.exceptions import CoverageAnalysisError
+            exit_code = 2 if report.kind == "env" else (124 if report.kind == "timeout" else 1)
+            raise CoverageAnalysisError(
+                f"No coverage file generated ({report.kind}). {guidance_text}",
+                kind=report.kind,
+                exit_code=exit_code,
+            )
+
+    
+
+    def preflight_check(self) -> Dict[str, Union[str, bool, List[str]]]:
+        """Check environment readiness to run pytest coverage.
+
+        Returns a dict containing:
+        - status: 'ok' | 'warn'
+        - venv_active: bool
+        - pytest_importable: bool
+        - coverage_importable: bool
+        - messages: List[str] guidance messages
+        """
+        messages: List[str] = []
+
+        # Detect virtualenv activation
+        venv_active = bool(os.environ.get("VIRTUAL_ENV")) or (getattr(sys, 'base_prefix', sys.prefix) != sys.prefix)
+
+        # Try importing pytest/coverage in current interpreter
+        pytest_importable = True
+        coverage_importable = True
+        try:
+            import pytest  # type: ignore  # noqa: F401
+        except Exception:
+            pytest_importable = False
+            messages.append(
+                f"pytest is not importable in interpreter '{sys.executable}'. Install with 'pip install pytest pytest-cov' in the active environment."
+            )
+
+        try:
+            import coverage as _cov  # type: ignore  # noqa: F401
+        except Exception:
+            coverage_importable = False
+            messages.append(
+                f"coverage.py is not importable in interpreter '{sys.executable}'. Install with 'pip install coverage pytest-cov'."
+            )
+
+        # Suggest activation commands if a local venv exists but not active
+        if not venv_active:
+            candidate = None
+            for name in ('.venv', 'venv', '.env', 'env'):
+                path = (self.project_root / name)
+                if path.exists():
+                    candidate = path
+                    break
+            if candidate:
+                if platform.system().lower().startswith('win'):
+                    activate_cmd = f"{candidate}\\Scripts\\activate"
+                else:
+                    activate_cmd = f"source {candidate}/bin/activate"
+                messages.append(
+                    f"A virtual environment was detected at '{candidate}', but it is not active. Activate it with: {activate_cmd}"
+                )
+            else:
+                messages.append(
+                    "No active virtual environment detected. Create one with 'python -m venv .venv' and activate it, then install dependencies."
+                )
+
+        status = "ok" if (pytest_importable and coverage_importable) else "warn"
+        return {
+            "status": status,
+            "venv_active": venv_active,
+            "pytest_importable": pytest_importable,
+            "coverage_importable": coverage_importable,
+            "messages": messages,
+        }
 
     def _run_ast_coverage_fallback(self, source_files: List[str], test_files: List[str] = None) -> Dict[str, TestCoverage]:
         """Run AST-based coverage analysis as fallback."""

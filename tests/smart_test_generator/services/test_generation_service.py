@@ -228,6 +228,10 @@ class TestTestGenerationService:
         with patch.object(service, '_write_single_test_file') as mock_write:
             mock_write.return_value = TestFileResult("src/module.py", True)
             with patch.object(service, '_update_tracking_incremental') as mock_track:
+                # Disable post-generation runner for determinism
+                service.config.get.side_effect = lambda key, default=None: (
+                    False if key == 'test_generation.generation.test_runner.enable' else []
+                )
                 
                 # Act
                 result = service.generate_tests_streaming(mock_llm_client, [sample_test_plan], "directory_structure")

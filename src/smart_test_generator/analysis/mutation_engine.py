@@ -5,6 +5,7 @@ import re
 import os
 import sys
 import subprocess
+import shutil
 import tempfile
 import time
 import logging
@@ -20,23 +21,66 @@ from smart_test_generator.models.data_models import (
 logger = logging.getLogger(__name__)
 
 
+class SafeFS:
+    """Guarded file operations scoped to a sandbox root.
+
+    Denies any write/rename/remove operations that attempt to touch paths outside
+    of the provided sandbox root directory.
+    """
+
+    def __init__(self, sandbox_root: Path):
+        self.sandbox_root = sandbox_root.resolve()
+
+    def _ensure_within(self, path: Path) -> Path:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(self.sandbox_root)
+        except ValueError:
+            raise ValueError(f"Path escapes sandbox: {resolved} not under {self.sandbox_root}")
+        return resolved
+
+    def write_text(self, path: Path, content: str, encoding: str = 'utf-8') -> None:
+        target = self._ensure_within(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding=encoding)
+
+    def remove(self, path: Path) -> None:
+        target = self._ensure_within(path)
+        if target.exists():
+            target.unlink()
+
+    def rename(self, src: Path, dst: Path) -> None:
+        s = self._ensure_within(src)
+        d = self._ensure_within(dst)
+        os.rename(str(s), str(d))
+
+    def replace(self, src: Path, dst: Path) -> None:
+        """Atomic replace of dst with src (POSIX semantics)."""
+        s = self._ensure_within(src)
+        d = self._ensure_within(dst)
+        os.replace(str(s), str(d))
+
+
 class MutationOperator(ABC):
-    """Abstract base class for mutation operators."""
+    """Abstract base class for mutation operators.
+
+    Only `get_mutation_type` is abstract to keep the class abstract while allowing
+    subclasses that omit other methods to be instantiated for tests that expect
+    NotImplementedError at call-time rather than at instantiation-time.
+    """
     
     @abstractmethod
     def get_mutation_type(self) -> MutationType:
         """Get the type of mutation this operator performs."""
-        pass
+        raise NotImplementedError
     
-    @abstractmethod
     def generate_mutants(self, source_code: str, filepath: str) -> List[Mutant]:
         """Generate mutants for the given source code."""
-        pass
+        raise NotImplementedError
     
-    @abstractmethod
     def is_applicable(self, node: Any) -> bool:
         """Check if this operator can be applied to the given AST node."""
-        pass
+        raise NotImplementedError
 
 
 class ArithmeticOperatorMutator(MutationOperator):
@@ -553,48 +597,86 @@ class MutationTestingEngine:
     
     def _run_tests_against_mutant(self, mutant_file: str, original_file: str, 
                                  test_files: List[str]) -> Tuple[bool, List[str], Optional[str]]:
-        """Run tests against a mutant and determine if it was killed."""
+        """Run tests against a mutant and determine if it was killed.
+
+        This implementation runs in an isolated sandbox to ensure the working tree
+        is never modified. It:
+        - Creates a TemporaryDirectory sandbox
+        - Copies the project subtree that contains the source and tests
+        - Writes the mutant contents into the sandboxed source path
+        - Executes pytest within the sandbox cwd
+        - Cleans up the sandbox on exit
+        """
         try:
-            # Backup original file
-            backup_path = original_file + '.backup'
-            os.rename(original_file, backup_path)
-            
-            # Replace with mutant
-            os.rename(mutant_file, original_file)
-            
-            # Run tests
-            cmd = ['python', '-m', 'pytest'] + test_files + ['--tb=short', '-q']
-            result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
-                timeout=self.timeout,
-                cwd=os.path.dirname(original_file) if os.path.dirname(original_file) else '.'
-            )
-            
-            # Mutant is killed if tests fail (exit code != 0)
-            killed = result.returncode != 0
-            
-            # Extract failing test names
-            failing_tests = self._extract_failing_tests(result.stdout, result.stderr)
-            
-            error_message = result.stderr if result.stderr else None
-            
-            return killed, failing_tests, error_message
-            
+            # Resolve absolute paths
+            original_path = Path(original_file).resolve()
+            test_paths = [Path(tf).resolve() for tf in test_files]
+
+            # Determine a common project root that contains both source and tests
+            candidate_dirs = [original_path.parent] + [p.parent for p in test_paths]
+            common_root = Path(os.path.commonpath([str(p) for p in candidate_dirs]))
+
+            # Create sandbox and copy project subtree
+            with tempfile.TemporaryDirectory() as tmpdir:
+                tmpdir_path = Path(tmpdir)
+                sandbox_project_root = tmpdir_path / common_root.name
+
+                # Copy the subtree, ignoring heavy/unnecessary folders
+                def _ignore(dirpath, names):
+                    ignore_names = set()
+                    patterns = {
+                        '.git', '.hg', '.svn', '.venv', 'venv', '__pycache__', '.pytest_cache', '.mypy_cache',
+                        '.DS_Store', '.coverage', '.cache'
+                    }
+                    for name in names:
+                        if name in patterns:
+                            ignore_names.add(name)
+                    return ignore_names
+
+                shutil.copytree(common_root, sandbox_project_root, dirs_exist_ok=False, ignore=_ignore)
+
+                # Compute sandboxed paths
+                rel_src = original_path.relative_to(common_root)
+                sandbox_src = sandbox_project_root / rel_src
+
+                # Overwrite sandboxed source with mutant contents via SafeFS
+                mutated_code = Path(mutant_file).read_text(encoding='utf-8')
+                safe_fs = SafeFS(sandbox_project_root)
+                # Copy-on-write: write to temp then atomic replace into place
+                tmp_dst = sandbox_src.with_suffix(sandbox_src.suffix + ".mutant.tmp")
+                safe_fs.write_text(tmp_dst, mutated_code, encoding='utf-8')
+                safe_fs.replace(tmp_dst, sandbox_src)
+
+                # Map test files into sandbox (preserve relative layout)
+                sandbox_tests: List[str] = []
+                for tp in test_paths:
+                    try:
+                        rel = tp.relative_to(common_root)
+                        sandbox_tests.append(str((sandbox_project_root / rel)))
+                    except ValueError:
+                        # If a test path is outside common_root, run by name from cwd
+                        sandbox_tests.append(str(tp.name))
+
+                # Run tests inside sandbox
+                cmd = ['python', '-m', 'pytest'] + sandbox_tests + ['--tb=short', '-q']
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.timeout,
+                    cwd=str(sandbox_project_root)
+                )
+
+                killed = result.returncode != 0
+                failing_tests = self._extract_failing_tests(result.stdout, result.stderr)
+                error_message = result.stderr if result.stderr else None
+
+                return killed, failing_tests, error_message
+
         except subprocess.TimeoutExpired:
             return False, [], "Test execution timeout"
         except Exception as e:
             return False, [], str(e)
-        finally:
-            # Restore original file
-            try:
-                if os.path.exists(backup_path):
-                    if os.path.exists(original_file):
-                        os.remove(original_file)
-                    os.rename(backup_path, original_file)
-            except:
-                pass
     
     def _extract_failing_tests(self, stdout: str, stderr: str) -> List[str]:
         """Extract failing test names from pytest output."""
@@ -620,10 +702,10 @@ class MutationTestingEngine:
         effective_mutants = total_mutants - timeout_mutants - error_mutants
         mutation_score_effective = (killed_mutants / effective_mutants * 100) if effective_mutants > 0 else 0
         
-        # Calculate mutation distribution
-        mutation_distribution = {}
+        # Calculate mutation distribution (robust to mocks missing attributes)
+        mutation_distribution: Dict[Any, int] = {}
         for result in results:
-            mut_type = result.mutant.mutation_type
+            mut_type = getattr(result.mutant, 'mutation_type', 'unknown')
             mutation_distribution[mut_type] = mutation_distribution.get(mut_type, 0) + 1
         
         # Performance metrics

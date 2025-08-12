@@ -46,7 +46,10 @@ class LLMClientError(SmartTestGeneratorError):
 
 class CoverageAnalysisError(SmartTestGeneratorError):
     """Raised when coverage analysis fails."""
-    pass
+    def __init__(self, message: str, *, kind: str = "unknown", exit_code: int = 1, suggestion: Optional[str] = None):
+        super().__init__(message, suggestion)
+        self.kind = kind
+        self.exit_code = exit_code
 
 
 class TestGenerationError(SmartTestGeneratorError):

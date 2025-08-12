@@ -76,14 +76,49 @@ class Config:
             'coverage': {
                 'minimum_line_coverage': 80,
                 'minimum_branch_coverage': 70,
-                'regenerate_if_below': 60  # Regenerate tests if coverage drops below this
+                'regenerate_if_below': 60,  # Regenerate tests if coverage drops below this
+                # Additional runner configuration for coverage/pytest invocation
+                'pytest_args': [],  # Extra arguments appended to pytest command
+                'runner': {
+                    'mode': 'python-module',          # 'python-module' | 'pytest-path' | 'custom'
+                    'python': None,                   # If None, use current sys.executable
+                    'pytest_path': 'pytest',          # Used when mode == 'pytest-path'
+                    'custom_cmd': [],                 # Full custom argv when mode == 'custom'
+                    'cwd': None,                      # Working directory; default project root
+                    'args': []                        # Runner-provided args before pytest_args
+                },
+                'env': {
+                    'propagate': True,                # Inherit current environment variables
+                    'extra': {},                      # Extra env vars to set or override
+                    'append_pythonpath': []           # Paths to append to PYTHONPATH
+                }
             },
             'generation': {
                 'include_docstrings': True,
                 'generate_fixtures': True,
                 'parametrize_similar_tests': True,
                 'max_test_methods_per_class': 20,
-                'always_analyze_new_files': True
+                'always_analyze_new_files': True,
+                # Post-generation pytest runner (Task 2.1)
+                'test_runner': {
+                    'enable': False,          # Default off to preserve current behavior
+                    'args': [],               # Extra pytest args, e.g., ['-q']
+                    'cwd': None,              # Working directory; default project root
+                    'junit_xml': False        # When true, write JUnit XML to artifacts for failure parsing
+                },
+                'merge': {
+                    'strategy': 'append',     # 'append' | 'ast-merge'
+                    'dry_run': False,
+                    'formatter': 'none'
+                },
+                'refine': {
+                    'enable': False,
+                    'max_retries': 2,
+                    'backoff_base_sec': 1.0,
+                    'backoff_max_sec': 8.0,
+                    'stop_on_no_change': True,
+                    'max_total_minutes': 5
+                }
             }
         },
         'cost_management': {

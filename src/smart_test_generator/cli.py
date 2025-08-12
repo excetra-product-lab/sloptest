@@ -138,6 +138,140 @@ def setup_argparse() -> argparse.ArgumentParser:
         help="Configuration file"
     )
 
+    # Coverage runner configuration
+    parser.add_argument(
+        "--runner-mode",
+        choices=['python-module', 'pytest-path', 'custom'],
+        help="Coverage runner mode: 'python-module' (default), 'pytest-path', or 'custom'"
+    )
+    parser.add_argument(
+        "--python",
+        dest="runner_python",
+        help="Python executable to use when runner-mode=python-module (default: current interpreter)"
+    )
+    parser.add_argument(
+        "--pytest-path",
+        dest="runner_pytest_path",
+        help="Path to pytest executable when runner-mode=pytest-path"
+    )
+    parser.add_argument(
+        "--runner-arg",
+        action="append",
+        default=[],
+        help="Additional argument for the runner (can be repeated)"
+    )
+    parser.add_argument(
+        "--pytest-arg",
+        action="append",
+        default=[],
+        help="Additional argument to pass to pytest (can be repeated)"
+    )
+    parser.add_argument(
+        "--runner-cwd",
+        dest="runner_cwd",
+        help="Working directory to execute pytest from"
+    )
+    parser.add_argument(
+        "--env",
+        action="append",
+        default=[],
+        help="Extra environment variable KEY=VALUE to set for pytest (can be repeated)"
+    )
+    parser.add_argument(
+        "--append-pythonpath",
+        action="append",
+        default=[],
+        help="Path to append to PYTHONPATH for pytest (can be repeated)"
+    )
+    parser.add_argument(
+        "--no-env-propagate",
+        dest="env_propagate",
+        action="store_false",
+        help="Do not inherit current environment variables for the pytest run"
+    )
+
+    # Post-generation auto-run and refine loop
+    parser.add_argument(
+        "--auto-run",
+        dest="auto_run",
+        action="store_true",
+        help="Automatically run pytest after generating tests"
+    )
+    parser.add_argument(
+        "--no-auto-run",
+        dest="auto_run",
+        action="store_false",
+        help="Disable automatic pytest run after generation"
+    )
+    parser.add_argument(
+        "--refine-enable",
+        dest="refine_enable",
+        action="store_true",
+        help="Enable LLM-driven refinement loop when tests fail"
+    )
+    parser.add_argument(
+        "--no-refine",
+        dest="refine_enable",
+        action="store_false",
+        help="Disable refinement loop"
+    )
+    parser.add_argument(
+        "--retries",
+        dest="refine_retries",
+        type=int,
+        help="Max refinement retries (default: 2)"
+    )
+    parser.add_argument(
+        "--backoff-base-sec",
+        dest="refine_backoff_base_sec",
+        type=float,
+        help="Refinement backoff base seconds (default: 1.0)"
+    )
+    parser.add_argument(
+        "--backoff-max-sec",
+        dest="refine_backoff_max_sec",
+        type=float,
+        help="Refinement backoff max seconds (default: 8.0)"
+    )
+    parser.add_argument(
+        "--stop-on-no-change",
+        dest="refine_stop_on_no_change",
+        action="store_true",
+        help="Stop refinement when LLM returns no updated files"
+    )
+    parser.add_argument(
+        "--no-stop-on-no-change",
+        dest="refine_stop_on_no_change",
+        action="store_false",
+        help="Do not stop when no changes are returned"
+    )
+    parser.add_argument(
+        "--max-total-minutes",
+        dest="refine_max_total_minutes",
+        type=int,
+        help="Max total minutes allowed for refinement (soft cap)"
+    )
+
+    # Merge strategy flags
+    parser.add_argument(
+        "--merge-strategy",
+        dest="merge_strategy",
+        choices=["append", "ast-merge"],
+        help="Test file merge strategy (append or ast-merge)"
+    )
+    parser.add_argument(
+        "--merge-dry-run",
+        dest="merge_dry_run",
+        action="store_true",
+        help="Do not write files; only compute changes for merge"
+    )
+    parser.add_argument(
+        "--merge-formatter",
+        dest="merge_formatter",
+        choices=["none", "black"],
+        help="Formatter to apply to merged output (none or black)"
+    )
+
     # Cost management arguments
     parser.add_argument(
         "--cost-optimize",
@@ -219,6 +353,83 @@ def validate_system_and_project(args, feedback: UserFeedback) -> Tuple[Path, Pat
         sys.exit(1)
 
 
+def _apply_cli_overrides_to_config(args, config: Config) -> None:
+    """Apply CLI override flags to the loaded configuration object."""
+    # Runner mode & executables
+    if getattr(args, 'runner_mode', None):
+        config.config['test_generation']['coverage']['runner']['mode'] = args.runner_mode
+    if getattr(args, 'runner_python', None):
+        config.config['test_generation']['coverage']['runner']['python'] = args.runner_python
+    if getattr(args, 'runner_pytest_path', None):
+        config.config['test_generation']['coverage']['runner']['pytest_path'] = args.runner_pytest_path
+    if getattr(args, 'runner_cwd', None):
+        config.config['test_generation']['coverage']['runner']['cwd'] = args.runner_cwd
+
+    # Runner args and pytest args
+    if hasattr(args, 'runner_arg') and args.runner_arg:
+        runner_args = config.config['test_generation']['coverage']['runner'].get('args', []) or []
+        runner_args.extend(args.runner_arg)
+        config.config['test_generation']['coverage']['runner']['args'] = runner_args
+    if hasattr(args, 'pytest_arg') and args.pytest_arg:
+        pytest_args = config.config['test_generation']['coverage'].get('pytest_args', []) or []
+        pytest_args.extend(args.pytest_arg)
+        config.config['test_generation']['coverage']['pytest_args'] = pytest_args
+
+    # Env propagation and extras
+    if hasattr(args, 'env_propagate') and args.env_propagate is False:
+        config.config['test_generation']['coverage']['env']['propagate'] = False
+    if hasattr(args, 'env') and args.env:
+        extra_env = config.config['test_generation']['coverage']['env'].get('extra', {}) or {}
+        for pair in args.env:
+            if '=' in pair:
+                k, v = pair.split('=', 1)
+                extra_env[str(k)] = str(v)
+        config.config['test_generation']['coverage']['env']['extra'] = extra_env
+    if hasattr(args, 'append_pythonpath') and args.append_pythonpath:
+        append_pp = config.config['test_generation']['coverage']['env'].get('append_pythonpath', []) or []
+        append_pp.extend(args.append_pythonpath)
+        config.config['test_generation']['coverage']['env']['append_pythonpath'] = append_pp
+
+    # Auto-run pytest after generation
+    if hasattr(args, 'auto_run') and args.auto_run is not None:
+        config.config['test_generation']['generation']['test_runner']['enable'] = bool(args.auto_run)
+
+    # Refinement loop
+    ref_cfg = config.config['test_generation']['generation'].setdefault('refine', {
+        'enable': False,
+        'max_retries': 2,
+        'backoff_base_sec': 1.0,
+        'backoff_max_sec': 8.0,
+        'stop_on_no_change': True,
+        'max_total_minutes': 5,
+    })
+    if getattr(args, 'refine_enable', None) is not None:
+        ref_cfg['enable'] = bool(args.refine_enable)
+    if getattr(args, 'refine_retries', None) is not None:
+        ref_cfg['max_retries'] = int(args.refine_retries)
+    if getattr(args, 'refine_backoff_base_sec', None) is not None:
+        ref_cfg['backoff_base_sec'] = float(args.refine_backoff_base_sec)
+    if getattr(args, 'refine_backoff_max_sec', None) is not None:
+        ref_cfg['backoff_max_sec'] = float(args.refine_backoff_max_sec)
+    if getattr(args, 'refine_stop_on_no_change', None) is not None:
+        ref_cfg['stop_on_no_change'] = bool(args.refine_stop_on_no_change)
+    if getattr(args, 'refine_max_total_minutes', None) is not None:
+        ref_cfg['max_total_minutes'] = int(args.refine_max_total_minutes)
+
+    # Merge strategy
+    merge_cfg = config.config['test_generation']['generation'].setdefault('merge', {
+        'strategy': 'append',
+        'dry_run': False,
+        'formatter': 'none',
+    })
+    if getattr(args, 'merge_strategy', None) is not None:
+        merge_cfg['strategy'] = str(args.merge_strategy)
+    if getattr(args, 'merge_dry_run', None) is not None:
+        merge_cfg['dry_run'] = bool(args.merge_dry_run)
+    if getattr(args, 'merge_formatter', None) is not None:
+        merge_cfg['formatter'] = str(args.merge_formatter)
+
+
 def load_and_validate_config(args, feedback: UserFeedback) -> Config:
     """Load and validate configuration with status display."""
     feedback.subsection_header("Configuration")
@@ -241,6 +452,9 @@ def load_and_validate_config(args, feedback: UserFeedback) -> Config:
         "Excluded Patterns": f"{len(config.get('test_generation.exclude_dirs', []))} directories"
     }
     
+    # Apply CLI overrides to configuration
+    _apply_cli_overrides_to_config(args, config)
+
     feedback.summary_panel("Configuration Loaded", config_info, "blue")
     return config
 
@@ -476,9 +690,11 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             else:
                 feedback.info("State reset cancelled.")
             
-    except SmartTestGeneratorError:
+    except SmartTestGeneratorError as e:
         # These are already handled and logged by the services
-        sys.exit(1)
+        # Use structured exit code when available (e.g., CoverageAnalysisError)
+        exit_code = getattr(e, 'exit_code', 1)
+        sys.exit(exit_code)
     except Exception as e:
         feedback.error(f"Unexpected error during {args.mode} mode: {e}")
         if feedback.verbose:

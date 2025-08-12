@@ -14,6 +14,8 @@ from smart_test_generator.config import Config
 from smart_test_generator.utils.user_feedback import UserFeedback, ProgressTracker
 from smart_test_generator.exceptions import TestGenerationError
 from .base_service import BaseService
+from smart_test_generator.analysis.coverage.command_builder import CommandSpec
+from smart_test_generator.analysis.coverage.runner import run_pytest
 
 
 class TestFileResult(NamedTuple):
@@ -117,7 +119,13 @@ class TestGenerationService(BaseService):
             
             # Show final results table
             self._show_generation_results_summary(written_files, failed_files)
-            
+
+            # Optional post-generation pytest run (does not fail generation)
+            try:
+                self._maybe_run_pytest_post_generation(written_files, llm_client)
+            except Exception as e:
+                self.feedback.warning(f"Post-generation pytest run skipped due to error: {e}")
+
             progress.complete(f"Generated tests for {len(written_files)} files")
             return summary_dict
             
@@ -198,6 +206,12 @@ class TestGenerationService(BaseService):
             
             # Show final results table
             self._show_generation_results_summary(written_files, failed_files)
+
+            # Optional post-generation pytest run (does not fail generation)
+            try:
+                self._maybe_run_pytest_post_generation(written_files, llm_client)
+            except Exception as e:
+                self.feedback.warning(f"Post-generation pytest run skipped due to error: {e}")
             
             # Create summary for return compatibility
             summary_dict = {file: f"Generated and written successfully" for file in written_files}
@@ -273,12 +287,197 @@ class TestGenerationService(BaseService):
             self.feedback.console.print("[dim]────────────────────────────────────────────[/dim]")
     
     def _write_single_test_file(self, source_path: str, test_content: str) -> TestFileResult:
-        """Write a single test file and return the result."""
+        """Write a single test file and return the result.
+
+        Route through merge entrypoint (defaults to append/replace stub).
+        """
         try:
-            self.writer.write_test_file(source_path, test_content)
+            # Route through writer with configured strategy and dry-run
+            result = self.writer.write_or_merge_test_file(
+                source_path,
+                test_content,
+                strategy=self.config.get('test_generation.generation.merge.strategy', 'append')
+                if isinstance(getattr(self.config, 'config', {}), dict)
+                else 'append',
+                dry_run=bool(self.config.get('test_generation.generation.merge.dry_run', False))
+                if isinstance(getattr(self.config, 'config', {}), dict)
+                else False,
+            )
+            # Surface dry-run information to the user for visibility
+            try:
+                is_dry = bool(self.config.get('test_generation.generation.merge.dry_run', False))
+            except Exception:
+                is_dry = False
+
+            if is_dry:
+                # Show concise summary then diff (if available)
+                actions = ", ".join(result.actions or [])
+                self.feedback.info(f"[dry-run] {source_path}: strategy={result.strategy_used}, changed={result.changed}, actions=[{actions}]")
+                if result.diff:
+                    # Print diff compactly; user can expand full output in verbose mode
+                    if self.feedback.verbose:
+                        self.feedback.console.print("[dim]Unified diff:[/dim]")
+                        self.feedback.console.print(result.diff)
+                    else:
+                        # Show only a header in non-verbose to avoid overwhelming output
+                        diff_lines = result.diff.splitlines() if result.diff else []
+                        preview = "\n".join(diff_lines[:40])  # preview first ~40 lines
+                        self.feedback.console.print(preview)
             return TestFileResult(source_path, True)
         except Exception as e:
             return TestFileResult(source_path, False, str(e))
+
+    def _maybe_run_pytest_post_generation(self, written_files: List[str], llm_client: Optional[LLMClient] = None) -> None:
+        """Optionally run pytest after generation based on configuration.
+
+        Uses existing runner infrastructure to invoke pytest with minimal defaults.
+        """
+        try:
+            enabled = bool(self.config.get('test_generation.generation.test_runner.enable', False))
+        except Exception:
+            enabled = False
+
+        if not enabled or not written_files:
+            return
+
+        # Build a simple command spec using the existing command builder defaults
+        from smart_test_generator.analysis.coverage.command_builder import build_pytest_command
+
+        spec = build_pytest_command(project_root=self.project_root, config=self.config)
+
+        # Extend with user-provided test runner args
+        extra_args = list(self.config.get('test_generation.generation.test_runner.args', []) or [])
+        if extra_args:
+            spec.argv.extend(extra_args)
+
+        # Ensure we run from configured cwd if provided under test_runner
+        runner_cwd = self.config.get('test_generation.generation.test_runner.cwd')
+        if runner_cwd:
+            spec = CommandSpec(argv=spec.argv, cwd=Path(runner_cwd), env=spec.env)
+
+        # Execute
+        self.feedback.subsection_header("Post-generation: running pytest")
+        junit = bool(self.config.get('test_generation.generation.test_runner.junit_xml', False))
+        result = run_pytest(spec, junit_xml=junit)
+        # Summarize briefly
+        summary = f"pytest exit {result.returncode}"
+        if result.returncode == 0:
+            self.feedback.success(f"Post-generation pytest passed ({summary})")
+        else:
+            self.feedback.warning(f"Post-generation pytest failed ({summary}) — see artifacts for details")
+            # Attempt to parse failures and write failures.json
+            try:
+                from smart_test_generator.analysis.coverage.failure_parser import (
+                    parse_junit_xml,
+                    parse_stdout_stderr,
+                    write_failures_json,
+                )
+                artifacts_root = Path(result.cwd) / ".artifacts" / "coverage"
+                latest = None
+                if artifacts_root.exists():
+                    subdirs = [p for p in artifacts_root.iterdir() if p.is_dir()]
+                    latest = max(subdirs, key=lambda p: p.name, default=None) if subdirs else None
+                target_dir = latest or artifacts_root
+
+                parsed = None
+                if junit and result.junit_xml_path:
+                    parsed = parse_junit_xml(Path(result.junit_xml_path))
+                if not parsed or parsed.total == 0:
+                    parsed = parse_stdout_stderr(result.stdout, result.stderr)
+                write_failures_json(parsed, target_dir)
+            except Exception:
+                pass
+
+            # If refinement is enabled and an LLM client is available, run refinement loop
+            try:
+                refine_cfg = self.config.get('test_generation.generation.refine', {}) or {}
+                if refine_cfg.get('enable', False) and llm_client is not None:
+                    # Build payload
+                    from smart_test_generator.generation.refine.payload_builder import (
+                        build_payload,
+                        write_payload_json,
+                    )
+                    from smart_test_generator.generation.refine.refine_manager import (
+                        run_refinement_cycle,
+                    )
+
+                    # Ensure we have parsed failures
+                    try:
+                        from smart_test_generator.analysis.coverage.failure_parser import (
+                            parse_junit_xml as _parse_junit_xml,
+                            parse_stdout_stderr as _parse_stdout_stderr,
+                        )
+                        parsed_failures = parsed
+                        if not parsed_failures or parsed_failures.total == 0:
+                            if junit and result.junit_xml_path:
+                                parsed_failures = _parse_junit_xml(Path(result.junit_xml_path))
+                            if not parsed_failures or parsed_failures.total == 0:
+                                parsed_failures = _parse_stdout_stderr(result.stdout, result.stderr)
+                    except Exception:
+                        parsed_failures = None
+
+                    if parsed_failures and parsed_failures.total > 0:
+                        payload = build_payload(
+                            failures=parsed_failures,
+                            project_root=self.project_root,
+                            config=self.config,
+                            tests_written=written_files,
+                            last_run_command=result.cmd,
+                        )
+
+                        # Prepare artifacts dir for refinement using the run_id from payload
+                        run_id = str(payload.get('run_id'))
+                        refine_dir = Path(result.cwd) / ".artifacts" / "refine" / run_id
+                        write_payload_json(payload, refine_dir)
+
+                        # Safe apply of updates
+                        def _apply_updates(updated_files: List[Dict[str, str]], project_root: Path) -> None:
+                            root_resolved = project_root.resolve()
+                            for f in updated_files:
+                                rel_path = f.get('path', '')
+                                content = f.get('content', '')
+                                if not rel_path:
+                                    continue
+                                # Only allow writes under tests/ by default
+                                rel = Path(rel_path)
+                                if len(rel.parts) == 0 or rel.parts[0] != 'tests':
+                                    # Skip files outside tests directory for safety
+                                    continue
+                                dest = (project_root / rel).resolve()
+                                if not str(dest).startswith(str(root_resolved)):
+                                    continue
+                                dest.parent.mkdir(parents=True, exist_ok=True)
+                                dest.write_text(content)
+
+                        # Closure to rerun pytest and return exit code
+                        def _re_run_pytest() -> int:
+                            rr = run_pytest(spec, junit_xml=junit)
+                            return int(rr.returncode)
+
+                        outcome = run_refinement_cycle(
+                            payload=payload,
+                            project_root=self.project_root,
+                            artifacts_dir=refine_dir,
+                            llm_client=llm_client,
+                            config=self.config,
+                            apply_updates_fn=_apply_updates,
+                            re_run_pytest_fn=_re_run_pytest,
+                        )
+
+                        # Summarize refinement outcome
+                        if outcome.final_exit_code == 0:
+                            self.feedback.success(
+                                f"Refinement succeeded after {outcome.iterations} iteration(s)"
+                            )
+                        else:
+                            self.feedback.warning(
+                                f"Refinement ended with failing tests after {outcome.iterations} iteration(s)"
+                            )
+
+            except Exception as e:
+                self.feedback.warning(
+                    f"Refinement loop skipped due to error: {e}",
+                )
     
     def _update_tracking_incremental(self, plan: TestGenerationPlan, reason: str):
         """Update tracking state for a single successful test generation."""

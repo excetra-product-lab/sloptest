@@ -66,6 +66,18 @@ class TestSetupArgparse:
         args = parser.parse_args(['generate', '--directory', '/test'])
         assert args.mode == 'generate'
         assert args.directory == '/test'
+
+        # Ensure coverage runner flags are present
+        args = parser.parse_args(['coverage', '--runner-mode', 'python-module', '--pytest-arg=-q'])
+        assert args.mode == 'coverage'
+        assert args.runner_mode == 'python-module'
+        assert '-q' in args.pytest_arg
+        # Ensure merge flags are present
+        args = parser.parse_args(['generate', '--merge-strategy', 'ast-merge', '--merge-dry-run', '--merge-formatter', 'none'])
+        assert args.mode == 'generate'
+        assert args.merge_strategy == 'ast-merge'
+        assert args.merge_dry_run is True
+        assert args.merge_formatter == 'none'
     
     def test_default_values_are_set_correctly(self):
         """Test that default argument values are correct."""
