@@ -11,7 +11,7 @@ from typing import Optional, Tuple
 from smart_test_generator.config import Config
 from smart_test_generator.core import SmartTestGeneratorApp
 from smart_test_generator.utils.user_feedback import UserFeedback, ProgressTracker, StatusIcon
-from smart_test_generator.utils.validation import Validator, SystemValidator
+from smart_test_generator.utils.validation import Validator, SystemValidator, EnvironmentValidator
 from smart_test_generator.exceptions import (
     SmartTestGeneratorError,
     ValidationError,
@@ -55,9 +55,10 @@ logger = logging.getLogger(__name__)
 
 
 def show_welcome_banner(feedback: UserFeedback):
-    """Display a beautiful welcome banner."""
+    """Display a concise welcome banner."""
     if not feedback.quiet:
-        feedback.brand_header("AI-Powered Test Generation")
+        # Keep the banner simple and professional
+        feedback.brand_header()
 
 
 def setup_argparse() -> argparse.ArgumentParser:
@@ -299,13 +300,14 @@ def setup_argparse() -> argparse.ArgumentParser:
 
 
 def validate_system_and_project(args, feedback: UserFeedback) -> Tuple[Path, Path]:
-    """Validate system requirements and project setup with beautiful status display."""
+    """Validate system requirements, Python env, and project setup."""
     
     validation_steps = [
         ("Python Version", "Checking Python compatibility"),
-        ("Dependencies", "Verifying required packages"),
+        ("CLI Dependencies", "Verifying CLI required packages"),
         ("Project Structure", "Validating project setup"),
-        ("Permissions", "Checking write access")
+        ("Python Environment", "Checking venv and test deps"),
+        ("Permissions", "Checking write access"),
     ]
     
     # Show validation table
@@ -319,7 +321,7 @@ def validate_system_and_project(args, feedback: UserFeedback) -> Tuple[Path, Pat
         tracker.step("Checking Python version compatibility")
         SystemValidator.check_python_version()
         
-        # Dependencies check  
+        # Dependencies check (for CLI UI)
         tracker.step("Verifying required dependencies")
         required_packages = ['requests', 'pathlib', 'rich']
         Validator.check_dependencies(required_packages)
@@ -332,6 +334,22 @@ def validate_system_and_project(args, feedback: UserFeedback) -> Tuple[Path, Pat
         project_root = Validator.find_project_root(specified_dir)
         Validator.validate_python_project(project_root)
         
+        # Python environment check (venv + pytest/coverage importable + requirements)
+        tracker.step("Checking Python environment and test dependencies")
+        env_result = EnvironmentValidator.check_python_env(project_root)
+        missing_dists = EnvironmentValidator.check_requirements_installed(project_root)
+        if missing_dists:
+            from smart_test_generator.exceptions import DependencyError
+            raise DependencyError(
+                f"Missing required distributions from requirements.txt: {', '.join(sorted(set(missing_dists)))}",
+                suggestion="Activate your virtualenv and run: pip install -r requirements.txt"
+            )
+        # If key test deps are not importable, give an actionable warning but continue
+        if env_result.get("status") == "warn":
+            # Surface guidance to the user
+            for msg in env_result.get("messages", [])[:3]:
+                feedback.warning(msg)
+
         # Final validation
         tracker.step("Completing validation checks")
         
@@ -340,10 +358,13 @@ def validate_system_and_project(args, feedback: UserFeedback) -> Tuple[Path, Pat
         # Show validation results
         validation_results = [
             ("success", "Python Version", f"Compatible (>= 3.8)"),
-            ("success", "Dependencies", "All required packages available"),
+            ("success", "CLI Dependencies", "All required packages available"),
+            ("success" if env_result.get("venv_active") else "warning", "Python Environment", "Active venv" if env_result.get("venv_active") else "No active venv"),
+            ("success" if env_result.get("pytest_importable") else "warning", "pytest", "importable" if env_result.get("pytest_importable") else "not importable"),
+            ("success" if env_result.get("coverage_importable") else "warning", "coverage", "importable" if env_result.get("coverage_importable") else "not importable"),
             ("success", "Target Directory", f"Valid directory: {specified_dir}"),
             ("success", "Project Root", f"Found project root: {project_root}"),
-            ("success", "Permissions", "Write access confirmed")
+            ("success", "Permissions", "Write access confirmed"),
         ]
         
         feedback.status_table("Validation Results", validation_results)
@@ -462,6 +483,57 @@ def load_and_validate_config(args, feedback: UserFeedback) -> Config:
 
     feedback.summary_panel("Configuration Loaded", config_info, "blue")
     return config
+
+
+def validate_generation_environment(project_root: Path, config: Config, feedback: UserFeedback) -> None:
+    """Additional preflight checks specifically for running generation/tests.
+
+    - Ensure active venv and key test deps
+    - Warn if requirements.txt has missing dists
+    - Warn if configured runner python differs from current interpreter/venv
+    - Suggest PYTHONPATH adjustments for common src/ layout
+    """
+    env = EnvironmentValidator.check_python_env(project_root)
+
+    if env.get("status") == "warn":
+        for msg in env.get("messages", [])[:3]:
+            feedback.warning(msg)
+
+    missing = EnvironmentValidator.check_requirements_installed(project_root)
+    if missing:
+        feedback.error(
+            f"Missing distributions from requirements.txt: {', '.join(sorted(set(missing)))}",
+            "Activate your venv and run: pip install -r requirements.txt",
+        )
+        sys.exit(1)
+
+    configured_python = config.get('test_generation.coverage.runner.python')
+    if configured_python:
+        try:
+            configured_python_path = Path(configured_python).resolve()
+            current = Path(sys.executable).resolve()
+            venv_dir = os.environ.get("VIRTUAL_ENV")
+            if configured_python_path != current:
+                # If venv active but configured python is different or outside venv, warn
+                if venv_dir and not str(configured_python_path).startswith(str(venv_dir)):
+                    feedback.warning(
+                        f"Configured runner.python ({configured_python_path}) is not the active venv interpreter ({current}).",
+                        "Consider removing runner.python from config or set it to the active venv's python.",
+                    )
+        except Exception:
+            # Non-fatal
+            pass
+
+    # Recommend src/ layout PYTHONPATH if needed
+    src_dir = project_root / 'src'
+    if src_dir.exists():
+        append_list = config.get('test_generation.coverage.env.append_pythonpath', []) or []
+        py_path = os.environ.get('PYTHONPATH', '')
+        if str(src_dir) not in append_list and str(src_dir) not in py_path:
+            feedback.warning(
+                f"Detected 'src' layout at {src_dir} but it's not on PYTHONPATH.",
+                "Add to config: test_generation.coverage.env.append_pythonpath: ['src']",
+            )
 
 
 def validate_arguments(args, feedback: UserFeedback):
@@ -641,6 +713,9 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             
             feedback.sophisticated_progress("Initializing AI test generation", f"Using {ai_model_label}")
             
+            # Preflight: validate environment for generation/tests
+            validate_generation_environment(project_dir, config, feedback)
+
             # Generate tests with sophisticated progress tracking
             result = app.run_generate_mode(
                 llm_credentials=llm_credentials,

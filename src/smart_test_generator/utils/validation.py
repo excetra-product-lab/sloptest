@@ -4,6 +4,13 @@ import os
 import sys
 import subprocess
 import importlib.util
+import re
+from typing import Any, Dict
+try:
+    # Python 3.8+
+    from importlib import metadata as importlib_metadata  # type: ignore
+except Exception:  # pragma: no cover - fallback only
+    import importlib_metadata  # type: ignore
 from pathlib import Path
 from typing import Union, List
 
@@ -540,3 +547,108 @@ class EnvironmentValidator:
         except Exception:
             # Skip memory check on error
             pass 
+
+    @staticmethod
+    def check_python_env(project_root: Path) -> Dict[str, Any]:
+        """Validate that a suitable Python environment is active for running tests.
+
+        Returns a dict containing:
+        - status: 'ok' | 'warn'
+        - venv_active: bool
+        - pytest_importable: bool
+        - coverage_importable: bool
+        - local_venv: str | ''
+        - messages: List[str]
+        """
+        messages: List[str] = []
+
+        # Detect virtualenv activation
+        venv_active = bool(os.environ.get("VIRTUAL_ENV")) or (getattr(sys, 'base_prefix', sys.prefix) != sys.prefix)
+
+        # Try importing pytest/coverage in current interpreter
+        pytest_importable = True
+        coverage_importable = True
+        try:
+            import pytest  # type: ignore  # noqa: F401
+        except Exception:
+            pytest_importable = False
+            messages.append(
+                f"pytest is not importable in interpreter '{sys.executable}'. Install with 'pip install pytest pytest-cov' in the active environment."
+            )
+
+        try:
+            import coverage as _cov  # type: ignore  # noqa: F401
+        except Exception:
+            coverage_importable = False
+            messages.append(
+                f"coverage.py is not importable in interpreter '{sys.executable}'. Install with 'pip install coverage pytest-cov'."
+            )
+
+        # Detect a local, but inactive venv directory
+        candidate = None
+        for name in ('.venv', 'venv', '.env', 'env'):
+            path = (project_root / name)
+            if path.exists():
+                candidate = path
+                break
+
+        if not venv_active:
+            if candidate:
+                if os.name == 'nt':
+                    activate_cmd = f"{candidate}\\Scripts\\activate"
+                else:
+                    activate_cmd = f"source {candidate}/bin/activate"
+                messages.append(
+                    f"A virtual environment was detected at '{candidate}', but it is not active. Activate it with: {activate_cmd}"
+                )
+            else:
+                messages.append(
+                    "No active virtual environment detected. Create one with 'python -m venv .venv' and activate it, then install dependencies."
+                )
+
+        status = "ok" if (pytest_importable and coverage_importable) else "warn"
+        return {
+            "status": status,
+            "venv_active": venv_active,
+            "pytest_importable": pytest_importable,
+            "coverage_importable": coverage_importable,
+            "local_venv": str(candidate) if candidate else "",
+            "messages": messages,
+        }
+
+    @staticmethod
+    def _parse_requirements(requirements_path: Path) -> List[str]:
+        """Parse a requirements.txt to extract distribution names (best-effort)."""
+        names: List[str] = []
+        for raw in requirements_path.read_text(encoding='utf-8').splitlines():
+            line = raw.strip()
+            if not line or line.startswith('#'):
+                continue
+            if line.startswith(('-r ', '--requirement', '-e ', '--editable', 'git+', 'http:', 'https:')):
+                # Skip includes, editables, and VCS/URL requirements
+                continue
+            # Strip environment markers
+            if ';' in line:
+                line = line.split(';', 1)[0].strip()
+            # Extract distribution name before version specifiers/extras
+            name = re.split(r'[<>=!~\[]', line, maxsplit=1)[0].strip()
+            if name and name.lower() not in {"python"}:
+                names.append(name)
+        return names
+
+    @staticmethod
+    def check_requirements_installed(project_root: Path) -> List[str]:
+        """Return a list of missing distributions declared in requirements.txt (if present)."""
+        req = project_root / 'requirements.txt'
+        if not req.exists():
+            return []
+        missing: List[str] = []
+        for dist_name in EnvironmentValidator._parse_requirements(req):
+            try:
+                importlib_metadata.version(dist_name)
+            except importlib_metadata.PackageNotFoundError:  # type: ignore[attr-defined]
+                missing.append(dist_name)
+            except Exception:
+                # Best-effort: ignore unusual cases
+                pass
+        return missing

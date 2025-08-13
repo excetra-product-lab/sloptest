@@ -29,8 +29,8 @@ from smart_test_generator.exceptions import (
 class TestShowWelcomeBanner:
     """Test show_welcome_banner function."""
     
-    def test_displays_welcome_banner_with_features(self):
-        """Test that welcome banner displays title and features."""
+    def test_displays_concise_welcome_banner(self):
+        """Test that welcome banner displays a concise brand header without marketing taglines."""
         # Arrange
         mock_feedback = Mock()
         mock_feedback.status_spinner.return_value.__enter__ = Mock()
@@ -40,14 +40,7 @@ class TestShowWelcomeBanner:
         show_welcome_banner(mock_feedback)
         
         # Assert
-        mock_feedback.section_header.assert_called_once_with("Smart Test Generator")
-        mock_feedback.feature_showcase.assert_called_once()
-        features = mock_feedback.feature_showcase.call_args[0][0]
-        assert "Intelligent test analysis" in features
-        assert "Coverage-driven generation" in features
-        assert "Quality assessment" in features
-        assert "Incremental updates" in features
-        mock_feedback.divider.assert_called_once()
+        mock_feedback.brand_header.assert_called_once()
 
 
 class TestSetupArgparse:

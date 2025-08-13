@@ -355,7 +355,7 @@ class UserFeedback:
             return StatusIcon.INFO
 
     def brand_header(self, subtitle: str = ""):
-        """Display a world-class branded header."""
+        """Display a concise header without marketing taglines."""
         if not self.quiet:
             # Create a sophisticated branded header
             title_text = Text()
@@ -378,14 +378,7 @@ class UserFeedback:
             self.console.print()
             self.console.print(header_panel)
             
-            # Add a subtle tagline
-            tagline = Panel(
-                Align.center("AI-Powered Test Generation • Enterprise Grade • Coverage Driven"),
-                border_style="dim blue",
-                box=rich.box.SIMPLE,
-                padding=(0, 1)
-            )
-            self.console.print(tagline)
+            # No tagline — keep output minimal and focused
     
     def execution_summary(self, mode: str, config: Dict[str, Any]):
         """Display a sophisticated execution summary."""
