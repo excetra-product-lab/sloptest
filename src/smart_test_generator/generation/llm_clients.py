@@ -13,6 +13,11 @@ from pathlib import Path
 from smart_test_generator.exceptions import LLMClientError, AuthenticationError
 
 try:
+    from langchain_aws import ChatBedrock
+except Exception:  # pragma: no cover - optional dependency handled at runtime
+    ChatBedrock = None
+
+try:
     import boto3
     from botocore.exceptions import BotoCoreError, NoCredentialsError
 except Exception:  # pragma: no cover - optional dependency handled at runtime
@@ -302,32 +307,67 @@ class LLMClient(ABC):
 
 
 class BedrockClient(LLMClient):
-    """Client for interacting with AWS Bedrock via boto3 runtime."""
+    """Client for interacting with AWS Bedrock using langchain-aws ChatBedrock with STS assume-role."""
 
-    def __init__(self, model_id: str, region: str = "us-east-1", profile: str = None, cost_manager=None):
+    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", cost_manager=None):
         if boto3 is None:
             raise LLMClientError(
                 "boto3 is not installed",
                 suggestion="Install with: pip install boto3"
             )
-
-        session_kwargs = {}
-        if profile:
-            session_kwargs["profile_name"] = profile
-
-        try:
-            session = boto3.Session(**session_kwargs)
-            self.client = session.client("bedrock-runtime", region_name=region)
-        except Exception as e:
-            raise AuthenticationError(
-                f"Failed to initialize Bedrock client: {e}",
-                suggestion="Ensure AWS credentials exist and region/profile are correct."
+        if ChatBedrock is None:
+            raise LLMClientError(
+                "langchain-aws is not installed",
+                suggestion="Install with: pip install langchain-aws"
             )
 
-        self.model_id = model_id
         self.region = region
-        self.profile = profile
         self.cost_manager = cost_manager
+        self.inference_profile = inference_profile
+
+        # Assume role to obtain temporary credentials
+        try:
+            base_session = boto3.Session(region_name=region)
+            sts = base_session.client("sts", region_name=region)
+            assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName="bedrock")
+            creds = assumed["Credentials"]
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to assume role for Bedrock: {e}",
+                suggestion="Verify RoleArn and trust policy, and that your caller has sts:AssumeRole permission."
+            )
+
+        # Create bedrock-runtime client with 5-minute read timeout using the assumed credentials
+        try:
+            import botocore.config as botocore_config
+            config = botocore_config.Config(read_timeout=300, retries={"max_attempts": 3, "mode": "standard"})
+            session = boto3.Session(
+                aws_access_key_id=creds["AccessKeyId"],
+                aws_secret_access_key=creds["SecretAccessKey"],
+                aws_session_token=creds["SessionToken"],
+                region_name=region,
+            )
+            bedrock_runtime = session.client("bedrock-runtime", config=config)
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to create Bedrock runtime client: {e}",
+                suggestion="Check region and permissions for Bedrock runtime."
+            )
+
+        # Initialize ChatBedrock using the inference profile and provider anthropic
+        try:
+            # ChatBedrock uses 'inference_profile' and can receive a runtime_client
+            self.chat = ChatBedrock(
+                inference_profile=inference_profile,
+                region_name=region,
+                provider="anthropic",
+                client=bedrock_runtime,
+            )
+        except Exception as e:
+            raise LLMClientError(
+                f"Failed to initialize ChatBedrock: {e}",
+                suggestion="Ensure the inference profile exists and the provider is correct."
+            )
 
     def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str,
                             source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
@@ -357,29 +397,15 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 
 Generate comprehensive unit tests for each file in the code_files section above."""
 
-        # Bedrock message format for Claude models
-        messages = [
-            {"role": "user", "content": [{"type": "text", "text": system_prompt}]},
-            {"role": "user", "content": [{"type": "text", "text": user_content}]},
-        ]
-
         try:
-            response = self.client.converse(
-                modelId=self.model_id,
-                messages=messages,
-                inferenceConfig={
-                    "maxTokens": 16000,
-                    "temperature": 0.3,
-                },
-                additionalModelRequestFields={
-                    "response_format": {"type": "json_object"}
-                }
-            )
-
-            # Extract text from response
-            outputs = response.get("output", {}).get("message", {}).get("content", [])
-            text_parts = [p.get("text", "") for p in outputs if p.get("type") == "text"]
-            content = "\n".join(text_parts).strip() if text_parts else ""
+            # Use langchain ChatBedrock with a system + user message structure
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content),
+            ]
+            result = self.chat.invoke(messages)
+            content = getattr(result, "content", "") or ""
 
             tests_dict = json.loads(content) if content else {}
 

@@ -99,12 +99,9 @@ def setup_argparse() -> argparse.ArgumentParser:
     )
 
     # AWS Bedrock arguments
-    parser.add_argument("--bedrock-model-id", help="AWS Bedrock model ID (e.g., anthropic.claude-3-5-sonnet-20240620-v1:0)")
+    parser.add_argument("--bedrock-role-arn", help="AWS Role ARN to assume for Bedrock access")
+    parser.add_argument("--bedrock-inference-profile", help="AWS Bedrock inference profile identifier")
     parser.add_argument("--bedrock-region", default="us-east-1", help="AWS region for Bedrock (default: us-east-1)")
-    parser.add_argument("--bedrock-profile", help="AWS profile name to use (optional)")
-    parser.add_argument("--bedrock-credentials-path", help="Path that should contain AWS credentials (file or directory)")
-    parser.add_argument("--bedrock-pcl-command", help="Command to run (PCL) to set credentials if missing")
-    parser.add_argument("--bedrock-pcl-input", action="append", default=[], help="Key=Value input to pass into the PCL command (can be repeated)")
 
     # Common arguments
     parser.add_argument(
@@ -480,19 +477,21 @@ def validate_arguments(args, feedback: UserFeedback):
 
 def extract_llm_credentials(args) -> dict:
     """Extract LLM credentials from arguments."""
-    return {
+    creds = {
         'claude_api_key': args.claude_api_key or os.environ.get("CLAUDE_API_KEY"),
         'claude_model': args.claude_model,
         'azure_endpoint': args.endpoint,
         'azure_api_key': args.api_key,
         'azure_deployment': args.deployment,
-        'bedrock_model_id': getattr(args, 'bedrock_model_id', None),
-        'bedrock_region': getattr(args, 'bedrock_region', None),
-        'bedrock_profile': getattr(args, 'bedrock_profile', None),
-        'bedrock_credentials_path': getattr(args, 'bedrock_credentials_path', None),
-        'bedrock_pcl_command': getattr(args, 'bedrock_pcl_command', None),
-        'bedrock_pcl_inputs': _parse_key_values(getattr(args, 'bedrock_pcl_input', [])),
     }
+    # Only include Bedrock fields if provided
+    if getattr(args, 'bedrock_role_arn', None):
+        creds['bedrock_role_arn'] = args.bedrock_role_arn
+    if getattr(args, 'bedrock_inference_profile', None):
+        creds['bedrock_inference_profile'] = args.bedrock_inference_profile
+    if getattr(args, 'bedrock_region', None):
+        creds['bedrock_region'] = args.bedrock_region
+    return creds
 
 def _parse_key_values(items):
     parsed = {}
@@ -609,10 +608,14 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             llm_credentials = extract_llm_credentials(args)
             
             # Require at least one: Claude, Azure, or Bedrock
-            if not (llm_credentials.get('claude_api_key') or llm_credentials.get('azure_endpoint') and llm_credentials.get('azure_api_key') and llm_credentials.get('azure_deployment') or llm_credentials.get('bedrock_model_id')):
+            if not (
+                llm_credentials.get('claude_api_key') or 
+                (llm_credentials.get('azure_endpoint') and llm_credentials.get('azure_api_key') and llm_credentials.get('azure_deployment')) or 
+                (llm_credentials.get('bedrock_role_arn') and llm_credentials.get('bedrock_inference_profile'))
+            ):
                 feedback.error(
                     "No LLM credentials provided",
-                    "Provide Claude API key, Azure OpenAI credentials, or AWS Bedrock model ID"
+                    "Provide Claude API key, Azure OpenAI credentials, or AWS Bedrock role ARN and inference profile"
                 )
                 sys.exit(1)
             
@@ -620,7 +623,7 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             ai_model_label = (
                 llm_credentials['claude_model'] if llm_credentials.get('claude_api_key') else (
                     f"Azure:{llm_credentials.get('azure_deployment')}" if llm_credentials.get('azure_endpoint') else (
-                        f"Bedrock:{llm_credentials.get('bedrock_model_id')}"
+                        f"Bedrock:{llm_credentials.get('bedrock_inference_profile')}"
                     )
                 )
             )

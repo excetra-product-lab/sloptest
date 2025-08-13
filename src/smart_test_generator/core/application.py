@@ -114,12 +114,9 @@ class SmartTestGeneratorApp:
                 azure_endpoint=llm_credentials.get('azure_endpoint'),
                 azure_api_key=llm_credentials.get('azure_api_key'), 
                 azure_deployment=llm_credentials.get('azure_deployment'),
-                bedrock_model_id=llm_credentials.get('bedrock_model_id'),
+                bedrock_role_arn=llm_credentials.get('bedrock_role_arn'),
+                bedrock_inference_profile=llm_credentials.get('bedrock_inference_profile'),
                 bedrock_region=llm_credentials.get('bedrock_region'),
-                bedrock_profile=llm_credentials.get('bedrock_profile'),
-                bedrock_require_credentials_path=llm_credentials.get('bedrock_credentials_path'),
-                bedrock_pcl_command=llm_credentials.get('bedrock_pcl_command'),
-                bedrock_pcl_inputs=llm_credentials.get('bedrock_pcl_inputs'),
                 feedback=self.feedback
             )
             

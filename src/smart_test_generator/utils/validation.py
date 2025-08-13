@@ -278,7 +278,7 @@ class Validator:
     @staticmethod
     def validate_api_credentials(claude_api_key: str = None, azure_endpoint: str = None, 
                                 azure_api_key: str = None, azure_deployment: str = None,
-                                bedrock_model_id: str = None) -> None:
+                                bedrock_role_arn: str = None, bedrock_inference_profile: str = None) -> None:
         """
         Validate API credentials.
         
@@ -293,12 +293,12 @@ class Validator:
         """
         has_claude = claude_api_key is not None
         has_azure = all([azure_endpoint, azure_api_key, azure_deployment])
-        has_bedrock = bedrock_model_id is not None
+        has_bedrock = all([bedrock_role_arn, bedrock_inference_profile])
         
         if not has_claude and not has_azure and not has_bedrock:
             raise ValidationError(
                 "No valid API credentials provided",
-                suggestion="Provide either Claude API key (--claude-api-key), Azure OpenAI credentials (--endpoint, --api-key, --deployment), or AWS Bedrock model ID (--bedrock-model-id)."
+                suggestion="Provide either Claude API key (--claude-api-key), Azure OpenAI credentials (--endpoint, --api-key, --deployment), or AWS Bedrock role ARN and inference profile (--bedrock-role-arn, --bedrock-inference-profile)."
             )
         
         # Validate Claude API key format
