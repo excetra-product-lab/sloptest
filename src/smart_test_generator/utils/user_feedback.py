@@ -28,6 +28,8 @@ from rich.status import Status
 from rich.prompt import Confirm
 from rich.columns import Columns
 from rich.align import Align
+from rich.syntax import Syntax
+from rich.rule import Rule
 import rich.box
 
 logger = logging.getLogger(__name__)
@@ -432,6 +434,186 @@ class UserFeedback:
                 if current == total:
                     self.console.print()  # Final newline when complete
     
+    def test_plans_display(self, test_plans: List, project_root: Path = None):
+        """Display test generation plans in a beautiful format."""
+        if not test_plans or self.quiet:
+            return
+            
+        # Calculate summary statistics
+        total_elements = sum(len(plan.elements_to_test) for plan in test_plans)
+        total_files = len(test_plans)
+        files_with_existing_tests = len([p for p in test_plans if p.existing_test_files])
+        
+        # Display overview panel
+        overview_content = []
+        overview_content.append(f"[bold bright_cyan]Test Plans:[/bold bright_cyan] {total_files}")
+        overview_content.append(f"[bold bright_yellow]Elements Needing Tests:[/bold bright_yellow] {total_elements}")
+        overview_content.append(f"[bold bright_green]Files with Existing Tests:[/bold bright_green] {files_with_existing_tests}")
+        if files_with_existing_tests > 0:
+            overview_content.append(f"[bold bright_blue]New Test Files:[/bold bright_blue] {total_files - files_with_existing_tests}")
+        
+        overview_panel = Panel(
+            "\n".join(overview_content),
+            title="[bold bright_white]🎯 Test Generation Overview[/bold bright_white]",
+            border_style="bright_blue",
+            box=rich.box.ROUNDED,
+            padding=(1, 2),
+            title_align="left"
+        )
+        
+        self.console.print()
+        self.console.print(overview_panel)
+        
+        # Display detailed test plans table
+        if total_elements > 0:
+            table = Table(
+                title="📋 Test Generation Plans",
+                show_header=True, 
+                header_style="bold magenta",
+                border_style="cyan"
+            )
+            table.add_column("File", style="bright_cyan", min_width=25)
+            table.add_column("Elements", style="bright_yellow", justify="center", width=8)
+            table.add_column("Current Coverage", style="bright_green", justify="center", width=12)
+            table.add_column("Estimated After", style="bright_blue", justify="center", width=12)
+            table.add_column("Existing Tests", style="dim white", justify="center", width=8)
+            
+            for plan in test_plans:
+                if plan.elements_to_test:  # Only show plans that need work
+                    # Format file path
+                    if project_root:
+                        try:
+                            relative_path = str(Path(plan.source_file).relative_to(project_root))
+                        except ValueError:
+                            relative_path = str(Path(plan.source_file).name)
+                    else:
+                        relative_path = str(Path(plan.source_file).name)
+                    
+                    # Format coverage info
+                    current_coverage = f"{plan.coverage_before.line_coverage:.1f}%" if plan.coverage_before else "N/A"
+                    estimated_coverage = f"{plan.estimated_coverage_after:.1f}%"
+                    
+                    # Existing tests count
+                    existing_count = len(plan.existing_test_files)
+                    existing_display = f"{existing_count}" if existing_count > 0 else "None"
+                    
+                    table.add_row(
+                        relative_path,
+                        str(len(plan.elements_to_test)),
+                        current_coverage,
+                        estimated_coverage,
+                        existing_display
+                    )
+            
+            self.console.print()
+            self.console.print(table)
+            
+            # Show sample elements (for verbose mode or when not too many)
+            if self.verbose or total_elements <= 20:
+                self.console.print()
+                for plan in test_plans[:5]:  # Show first 5 plans
+                    if plan.elements_to_test:
+                        file_name = Path(plan.source_file).name
+                        elements_text = Text()
+                        elements_text.append(f"📁 {file_name}: ", style="bold bright_cyan")
+                        
+                        # Show first few elements
+                        element_names = []
+                        for element in plan.elements_to_test[:3]:
+                            element_names.append(f"{element.type}:{element.name}")
+                        
+                        elements_text.append(", ".join(element_names), style="dim white")
+                        
+                        if len(plan.elements_to_test) > 3:
+                            elements_text.append(f" + {len(plan.elements_to_test) - 3} more...", style="dim yellow")
+                        
+                        self.console.print(elements_text)
+                
+                if len(test_plans) > 5:
+                    remaining = len(test_plans) - 5
+                    self.console.print(f"[dim]... and {remaining} more files[/dim]")
+
+    def verbose_prompt_display(self, model_name: str, system_prompt: str, user_content: str, 
+                               content_size: int = None, file_count: int = None):
+        """Display LLM prompts in verbose mode with beautiful formatting."""
+        if not self.verbose:
+            return
+            
+        self.console.print()
+        self.console.print(Rule(f"🤖 LLM Prompt to {model_name}", style="bright_magenta"))
+        
+        # Show overview
+        overview_content = []
+        overview_content.append(f"[bold bright_blue]Model:[/bold bright_blue] {model_name}")
+        if content_size:
+            overview_content.append(f"[bold bright_yellow]Content Size:[/bold bright_yellow] {content_size:,} characters")
+        if file_count:
+            overview_content.append(f"[bold bright_green]Files Processing:[/bold bright_green] {file_count}")
+        
+        overview_panel = Panel(
+            "\n".join(overview_content),
+            title="[bold bright_white]📋 Request Overview[/bold bright_white]",
+            border_style="bright_blue",
+            box=rich.box.ROUNDED,
+            padding=(0, 1),
+            title_align="left"
+        )
+        
+        self.console.print(overview_panel)
+        
+        # Display system prompt with syntax highlighting
+        self.console.print()
+        self.console.print("[bold bright_cyan]📝 System Prompt[/bold bright_cyan]")
+        
+        # Truncate very long prompts for display
+        display_system = system_prompt
+        if len(system_prompt) > 2000:
+            display_system = system_prompt[:2000] + f"\n\n[... truncated {len(system_prompt) - 2000:,} more characters ...]"
+        
+        system_panel = Panel(
+            display_system,
+            border_style="cyan",
+            box=rich.box.MINIMAL,
+            padding=(1, 1)
+        )
+        self.console.print(system_panel)
+        
+        # Display user content with syntax highlighting 
+        self.console.print()
+        self.console.print("[bold bright_yellow]💬 User Content[/bold bright_yellow]")
+        
+        # Truncate very long user content for display
+        display_user = user_content
+        if len(user_content) > 3000:
+            # Show first part and structure info
+            truncated_content = user_content[:1500]
+            
+            # Try to find structure markers to show
+            structure_markers = []
+            if "<directory_structure>" in user_content:
+                structure_markers.append("📁 Directory Structure")
+            if "<code_files>" in user_content:
+                structure_markers.append("📄 Code Files")
+            if "AVAILABLE_IMPORTS" in user_content:
+                structure_markers.append("📦 Available Imports")
+            if "CLASS_SIGNATURES" in user_content:
+                structure_markers.append("🏗️ Class Signatures")
+            
+            display_user = truncated_content + f"\n\n[... content truncated ...]\n\n"
+            if structure_markers:
+                display_user += f"Content includes: {', '.join(structure_markers)}\n"
+            display_user += f"Total size: {len(user_content):,} characters"
+        
+        user_panel = Panel(
+            display_user,
+            border_style="yellow",
+            box=rich.box.MINIMAL,
+            padding=(1, 1)
+        )
+        self.console.print(user_panel)
+        
+        self.console.print(Rule(style="dim"))
+
     def completion_celebration(self, title: str, stats: Dict[str, Any], duration: str = ""):
         """Display a celebratory completion summary."""
         # Always show completion, even in quiet mode

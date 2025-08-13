@@ -309,7 +309,7 @@ class LLMClient(ABC):
 class BedrockClient(LLMClient):
     """Client for interacting with AWS Bedrock using langchain-aws ChatBedrock with STS assume-role."""
 
-    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", cost_manager=None):
+    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", cost_manager=None, feedback=None):
         if boto3 is None:
             raise LLMClientError(
                 "boto3 is not installed",
@@ -324,6 +324,7 @@ class BedrockClient(LLMClient):
         self.region = region
         self.cost_manager = cost_manager
         self.inference_profile = inference_profile
+        self.feedback = feedback
 
         # Assume role to obtain temporary credentials
         try:
@@ -398,6 +399,18 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 </code_files>{validation_context}
 
 Generate comprehensive unit tests for each file in the code_files section above."""
+
+        # Log verbose prompt information if feedback is available
+        if self.feedback:
+            file_count = len(re.findall(r'<file\s+filename=', xml_content))
+            content_size = len(system_prompt + user_content + directory_structure)
+            self.feedback.verbose_prompt_display(
+                model_name=f"AWS Bedrock ({self.inference_profile})",
+                system_prompt=system_prompt,
+                user_content=user_content,
+                content_size=content_size,
+                file_count=file_count
+            )
 
         try:
             # Use langchain ChatBedrock with a system + user message structure
@@ -486,12 +499,13 @@ Generate comprehensive unit tests for each file in the code_files section above.
 class AzureOpenAIClient(LLMClient):
     """Client for interacting with Azure OpenAI."""
 
-    def __init__(self, endpoint: str, api_key: str, deployment_name: str, cost_manager=None):
+    def __init__(self, endpoint: str, api_key: str, deployment_name: str, cost_manager=None, feedback=None):
         self.endpoint = endpoint
         self.api_key = api_key
         self.deployment_name = deployment_name
         self.api_version = "2024-10-21"
         self.cost_manager = cost_manager
+        self.feedback = feedback
 
     def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
@@ -528,6 +542,18 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 </code_files>{validation_context}
 
 Generate comprehensive unit tests for each file in the code_files section above."""
+
+        # Log verbose prompt information if feedback is available
+        if self.feedback:
+            file_count = len(re.findall(r'<file\s+filename=', xml_content))
+            content_size = len(system_prompt + user_content + directory_structure)
+            self.feedback.verbose_prompt_display(
+                model_name=f"Azure OpenAI ({self.deployment_name})",
+                system_prompt=system_prompt,
+                user_content=user_content,
+                content_size=content_size,
+                file_count=file_count
+            )
 
         payload = {
             "messages": [
@@ -613,11 +639,12 @@ Generate comprehensive unit tests for each file in the code_files section above.
 class ClaudeAPIClient(LLMClient):
     """Client for interacting with Claude API directly."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", cost_manager=None):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", cost_manager=None, feedback=None):
         self.api_key = api_key
         self.model = model
         self.api_url = "https://api.anthropic.com/v1/messages"
         self.cost_manager = cost_manager
+        self.feedback = feedback
 
     def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
@@ -689,6 +716,16 @@ Generate comprehensive unit tests for each file in the code_files section above.
             ]
         }
 
+        # Log verbose prompt information if feedback is available
+        if self.feedback:
+            self.feedback.verbose_prompt_display(
+                model_name=self.model,
+                system_prompt=system_prompt,
+                user_content=user_content,
+                content_size=content_size,
+                file_count=file_count
+            )
+        
         logger.info(f"Sending request to Claude API using model: {self.model}")
         logger.debug(f"Request payload size: {len(json.dumps(payload)):,} characters")
 

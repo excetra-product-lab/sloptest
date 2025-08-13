@@ -67,42 +67,43 @@ class TestGenerationService(BaseService):
                 batch_num = i // batch_size + 1
                 batch_end = min(i + batch_size, len(test_plans))
                 
-                # Compact batch progress
-                with self.feedback.status_spinner(f"Batch {batch_num}/{total_batches}: plans {i+1}-{batch_end}"):
-                    try:
-                        # Collect source files for validation
-                        batch_source_files = [plan.source_file for plan in batch]
-                        
-                        # Generate tests for this batch (keep LLM batching for efficiency)
-                        batch_tests = incremental_client.generate_contextual_tests(
-                            batch, directory_structure, batch_source_files, str(self.project_root))
-                        
-                        # Stream write each test file immediately
-                        batch_results = self._write_batch_immediately(batch, batch_tests, generation_reasons or {})
-                        
-                        # Track results
-                        for result in batch_results:
-                            if result.success:
-                                written_files.append(result.source_path)
-                            else:
-                                failed_files.append(result.source_path)
+                # Simple batch progress message (no nested spinner to avoid Rich display conflict)
+                self.feedback.sophisticated_progress(f"Processing batch {batch_num}/{total_batches}", f"plans {i+1}-{batch_end}")
+                
+                try:
+                    # Collect source files for validation
+                    batch_source_files = [plan.source_file for plan in batch]
                     
-                        # Compact success indicator
-                        successful_count = len([r for r in batch_results if r.success])
-                        failed_count = len([r for r in batch_results if not r.success])
-                        
-                        if failed_count == 0:
-                            self.feedback.success(f"✓ Batch {batch_num}: {successful_count} tests generated")
+                    # Generate tests for this batch (keep LLM batching for efficiency)
+                    batch_tests = incremental_client.generate_contextual_tests(
+                        batch, directory_structure, batch_source_files, str(self.project_root))
+                    
+                    # Stream write each test file immediately
+                    batch_results = self._write_batch_immediately(batch, batch_tests, generation_reasons or {})
+                    
+                    # Track results
+                    for result in batch_results:
+                        if result.success:
+                            written_files.append(result.source_path)
                         else:
-                            self.feedback.warning(f"⚠ Batch {batch_num}: {successful_count} success, {failed_count} failed")
-                        
-                    except Exception as e:
-                        self.feedback.error(f"✗ Batch {batch_num} failed: {e}")
-                        # Track all files in this batch as failed
-                        for plan in batch:
-                            failed_files.append(plan.source_file)
-                        # Continue with next batch instead of failing completely
-                        continue
+                            failed_files.append(result.source_path)
+                
+                    # Compact success indicator
+                    successful_count = len([r for r in batch_results if r.success])
+                    failed_count = len([r for r in batch_results if not r.success])
+                    
+                    if failed_count == 0:
+                        self.feedback.success(f"✓ Batch {batch_num}: {successful_count} tests generated")
+                    else:
+                        self.feedback.warning(f"⚠ Batch {batch_num}: {successful_count} success, {failed_count} failed")
+                    
+                except Exception as e:
+                    self.feedback.error(f"✗ Batch {batch_num} failed: {e}")
+                    # Track all files in this batch as failed
+                    for plan in batch:
+                        failed_files.append(plan.source_file)
+                    # Continue with next batch instead of failing completely
+                    continue
             
             if not written_files:
                 raise TestGenerationError(

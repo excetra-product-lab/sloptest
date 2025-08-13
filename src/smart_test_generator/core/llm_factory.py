@@ -82,7 +82,7 @@ class LLMClientFactory:
             Validator.validate_model_name(model, available_claude_models)
         
         feedback.info(f"Using Claude API with model: {model}")
-        return ClaudeAPIClient(validated_key, model, cost_manager)
+        return ClaudeAPIClient(validated_key, model, cost_manager, feedback)
     
     @staticmethod
     def _create_azure_client(endpoint: str, api_key: str, deployment: str, feedback: UserFeedback, cost_manager=None) -> AzureOpenAIClient:
@@ -97,9 +97,9 @@ class LLMClientFactory:
             )
         
         feedback.info("Using Azure OpenAI")
-        return AzureOpenAIClient(endpoint, validated_key, deployment, cost_manager) 
+        return AzureOpenAIClient(endpoint, validated_key, deployment, cost_manager, feedback) 
 
     @staticmethod
     def _create_bedrock_client(*, role_arn: str, inference_profile: str, region: str, feedback: UserFeedback, cost_manager=None) -> BedrockClient:
         feedback.info(f"Using AWS Bedrock (inference profile: {inference_profile}, region: {region})")
-        return BedrockClient(role_arn=role_arn, inference_profile=inference_profile, region=region, cost_manager=cost_manager)
+        return BedrockClient(role_arn=role_arn, inference_profile=inference_profile, region=region, cost_manager=cost_manager, feedback=feedback)

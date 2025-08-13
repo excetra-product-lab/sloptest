@@ -50,19 +50,24 @@ class SmartTestGeneratorApp:
             # Create test plans
             test_plans = self.analysis_service.create_test_plans(files_to_process, coverage_data)
             
+            # Show beautiful test plans display
+            if test_plans:
+                self.feedback.test_plans_display(test_plans, self.project_root)
+            else:
+                self.feedback.success("All files have adequate test coverage! No generation needed.")
+            
             # Analyze test quality for existing tests
             quality_reports = self.analysis_service.analyze_test_quality(test_plans)
             
-            # Generate analysis report
-            analysis_report = self.analysis_service.generate_analysis_report(
-                all_files, files_to_process, test_plans, reasons
-            )
+            # Generate quality gaps report if there are quality issues
+            if quality_reports:
+                quality_gaps_report = self.analysis_service.generate_quality_gaps_report(quality_reports)
+                if "No significant quality gaps" not in quality_gaps_report:
+                    self.feedback.info("\n" + quality_gaps_report)
             
-            # Generate quality gaps report
-            quality_gaps_report = self.analysis_service.generate_quality_gaps_report(quality_reports)
-            
-            # Combine reports
-            return f"{analysis_report}\n\n{quality_gaps_report}"
+            # Return a summary for compatibility
+            total_elements = sum(len(plan.elements_to_test) for plan in test_plans)
+            return f"Analysis complete: {len(test_plans)} files need tests, {total_elements} elements to test"
             
         except Exception as e:
             self.feedback.error(f"Analysis failed: {e}")
@@ -140,11 +145,8 @@ class SmartTestGeneratorApp:
                 self.feedback.success("No untested elements found. All code appears to be tested!")
                 return "No untested elements found."
             
-            # Show what will be processed
-            analysis_report = self.analysis_service.generate_analysis_report(
-                all_files, files_to_process, test_plans, generation_reasons
-            )
-            self.feedback.info(analysis_report)
+            # Show what will be processed with beautiful display
+            self.feedback.test_plans_display(test_plans, self.project_root)
             
             if dry_run:
                 return f"Dry run - would generate tests for {len(test_plans)} files."
