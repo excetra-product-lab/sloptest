@@ -59,7 +59,11 @@ class CoverageService(BaseService):
         ]
         
         for filepath, coverage in coverage_data.items():
-            rel_path = str(Path(filepath).relative_to(self.project_root))
+            path_obj = Path(filepath)
+            if path_obj.is_absolute():
+                rel_path = str(path_obj.relative_to(self.project_root))
+            else:
+                rel_path = str(path_obj)
             report_lines.append(f"{rel_path}: {coverage.line_coverage:.1f}%")
         
         return "\n".join(report_lines)

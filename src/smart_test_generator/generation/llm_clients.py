@@ -354,13 +354,15 @@ class BedrockClient(LLMClient):
                 suggestion="Check region and permissions for Bedrock runtime."
             )
 
-        # Initialize ChatBedrock using the inference profile and provider anthropic
+        # Initialize ChatBedrock using the inference profile (as model_id) and provider anthropic
         try:
             # ChatBedrock uses 'inference_profile' and can receive a runtime_client
+            # Pass the inference profile as model id
             self.chat = ChatBedrock(
-                inference_profile=inference_profile,
+                model_id=inference_profile,
                 region_name=region,
                 provider="anthropic",
+                config=config,
                 client=bedrock_runtime,
             )
         except Exception as e:
@@ -406,6 +408,21 @@ Generate comprehensive unit tests for each file in the code_files section above.
             ]
             result = self.chat.invoke(messages)
             content = getattr(result, "content", "") or ""
+            # Normalize possible structured content into text
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and "text" in part:
+                        text_parts.append(part["text"])
+                    else:
+                        try:
+                            # Support objects with attribute access
+                            maybe_text = getattr(part, "text", None)
+                            if maybe_text:
+                                text_parts.append(maybe_text)
+                        except Exception:
+                            continue
+                content = "\n".join(text_parts)
 
             tests_dict = json.loads(content) if content else {}
 

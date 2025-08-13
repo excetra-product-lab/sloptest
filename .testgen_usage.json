@@ -152,5 +152,82 @@
     "input_tokens": 1000,
     "output_tokens": 500,
     "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-12T22:14:03.430221",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-12T23:07:57.766622",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T11:43:26.030568",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T12:05:15.978002",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T13:20:51.183035",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T13:24:45.577413",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T13:42:32.154717",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T13:45:22.940100",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T14:48:58.727649",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T14:51:08.085854",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
+  },
+  {
+    "timestamp": "2025-08-13T14:51:16.006466",
+    "model": "claude-3-haiku-20240307",
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "estimated_cost": 0.000875
   }
 ]

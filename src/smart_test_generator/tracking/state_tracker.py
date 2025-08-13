@@ -18,7 +18,13 @@ class TestGenerationTracker:
 
     def __init__(self, state_file: str = ".testgen_state.json"):
         self.state_file = state_file
-        self.state = self._load_state()
+        # Avoid polluting tests with an existing global state file
+        self.state = self._load_state() if os.path.exists(self.state_file) else TestGenerationState(
+            timestamp=datetime.now().isoformat(),
+            tested_elements={},
+            coverage_history={},
+            generation_log=[]
+        )
 
     def _load_state(self) -> TestGenerationState:
         """Load previous test generation state."""
@@ -52,8 +58,8 @@ class TestGenerationTracker:
         if force:
             return True, "Force flag set"
 
-        # New file - always generate
-        if filepath not in self.state.tested_elements:
+        # New file - only considered new if not in state AND no coverage provided
+        if filepath not in self.state.tested_elements and not current_coverage:
             return True, "New file detected"
 
         # No coverage data - check if tests exist before defaulting to generation
@@ -69,12 +75,7 @@ class TestGenerationTracker:
                 # No tested elements recorded and no coverage data
                 return True, "No coverage data available and no tested elements recorded"
 
-        # Coverage below minimum threshold
-        min_coverage = config.get('test_generation.coverage.minimum_line_coverage', 80)
-        if current_coverage.line_coverage < min_coverage:
-            return True, f"Coverage ({current_coverage.line_coverage:.1f}%) below minimum ({min_coverage}%)"
-
-        # Coverage dropped significantly
+        # Coverage dropped significantly (prioritize this reason when applicable)
         if filepath in self.state.coverage_history:
             history = self.state.coverage_history[filepath]
             if history and len(history) > 0:
@@ -82,6 +83,11 @@ class TestGenerationTracker:
                 coverage_drop = last_coverage - current_coverage.line_coverage
                 if coverage_drop > 10:  # Coverage dropped by more than 10%
                     return True, f"Coverage dropped by {coverage_drop:.1f}%"
+
+        # Coverage below minimum threshold
+        min_coverage = config.get('test_generation.coverage.minimum_line_coverage', 80)
+        if current_coverage.line_coverage < min_coverage:
+            return True, f"Coverage ({current_coverage.line_coverage:.1f}%) below minimum ({min_coverage}%)"
 
         # Check for untested elements
         if current_coverage.uncovered_functions:
@@ -116,8 +122,11 @@ class TestGenerationTracker:
         # Update tested elements
         if filepath not in self.state.tested_elements:
             self.state.tested_elements[filepath] = []
-        self.state.tested_elements[filepath].extend(elements_generated)
-        self.state.tested_elements[filepath] = list(set(self.state.tested_elements[filepath]))
+        # Deduplicate while preserving order
+        existing = self.state.tested_elements[filepath]
+        for elem in elements_generated:
+            if elem not in existing:
+                existing.append(elem)
 
         # Keep only last 100 log entries
         if len(self.state.generation_log) > 100:
@@ -141,9 +150,11 @@ class TestGenerationTracker:
         if filepath not in self.state.tested_elements:
             self.state.tested_elements[filepath] = []
         
-        # Add elements to tested list
-        self.state.tested_elements[filepath].extend(elements)
-        self.state.tested_elements[filepath] = list(set(self.state.tested_elements[filepath]))
+        # Add elements to tested list, preserving order and uniqueness
+        existing = self.state.tested_elements[filepath]
+        for elem in elements:
+            if elem not in existing:
+                existing.append(elem)
         
         # Log this action
         self.state.generation_log.append({

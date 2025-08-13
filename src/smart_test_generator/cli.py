@@ -10,6 +10,7 @@ from typing import Optional, Tuple
 
 from smart_test_generator.config import Config
 from smart_test_generator.core import SmartTestGeneratorApp
+from smart_test_generator.utils.cost_manager import CostManager
 from smart_test_generator.utils.user_feedback import UserFeedback, ProgressTracker, StatusIcon
 from smart_test_generator.utils.validation import Validator, SystemValidator, EnvironmentValidator
 from smart_test_generator.exceptions import (
@@ -339,7 +340,6 @@ def validate_system_and_project(args, feedback: UserFeedback) -> Tuple[Path, Pat
         env_result = EnvironmentValidator.check_python_env(project_root)
         missing_dists = EnvironmentValidator.check_requirements_installed(project_root)
         if missing_dists:
-            from smart_test_generator.exceptions import DependencyError
             raise DependencyError(
                 f"Missing required distributions from requirements.txt: {', '.join(sorted(set(missing_dists)))}",
                 suggestion="Activate your virtualenv and run: pip install -r requirements.txt"
@@ -469,6 +469,7 @@ def load_and_validate_config(args, feedback: UserFeedback) -> Config:
         except ConfigurationError as e:
             feedback.error(str(e), getattr(e, 'suggestion', None))
             sys.exit(1)
+            return  # This won't be reached in real execution, but helps with testing
     
     # Show config summary
     config_info = {
@@ -747,9 +748,7 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             
         elif args.mode == 'cost':
             # Handle cost usage viewing
-            from smart_test_generator.utils.cost_manager import CostManager
-            
-            cost_manager = CostManager(config)
+            cost_manager = CostManager(app.config)
             usage_summary = cost_manager.get_usage_summary(args.usage_days)
             
             feedback.completion_celebration("Cost Analysis", {

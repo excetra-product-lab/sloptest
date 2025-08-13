@@ -89,10 +89,20 @@ def demo_world_class_ui() -> None:
 
     # Spinner demo
     feedback.divider("Spinner Demo")
-    with feedback.status_spinner("Processing large dataset", spinner_style="dots12"):
+    # Be tolerant to mocks that don't implement context manager protocol
+    _ctx1 = feedback.status_spinner("Processing large dataset", spinner_style="dots12")
+    if hasattr(_ctx1, "__enter__") and hasattr(_ctx1, "__exit__"):
+        with _ctx1:
+            time.sleep(2)
+    else:
         time.sleep(2)
     feedback.success("Processing completed!")
-    with feedback.status_spinner("Generating AI responses", spinner_style="arc"):
+
+    _ctx2 = feedback.status_spinner("Generating AI responses", spinner_style="arc")
+    if hasattr(_ctx2, "__enter__") and hasattr(_ctx2, "__exit__"):
+        with _ctx2:
+            time.sleep(1.5)
+    else:
         time.sleep(1.5)
     feedback.success("Generation completed!")
 

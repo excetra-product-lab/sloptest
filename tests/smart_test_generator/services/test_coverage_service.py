@@ -22,7 +22,10 @@ class TestCoverageService:
     @pytest.fixture
     def mock_feedback(self):
         """Create a mock feedback object."""
-        return Mock(spec=UserFeedback)
+        feedback = Mock(spec=UserFeedback)
+        feedback.status_spinner.return_value.__enter__ = Mock()
+        feedback.status_spinner.return_value.__exit__ = Mock(return_value=None)
+        return feedback
     
     @pytest.fixture
     def project_root(self, tmp_path):
@@ -62,7 +65,7 @@ class TestCoverageService:
             # Assert
             assert service.project_root == project_root
             assert service.config == mock_config
-            assert service.feedback is None
+            assert isinstance(service.feedback, UserFeedback)
             mock_analyzer.assert_called_once_with(project_root, mock_config)
             mock_tracker.assert_called_once()
     
@@ -276,7 +279,9 @@ class TestCoverageService:
             
             mock_tracker = Mock()
             mock_state = Mock()
-            mock_state.coverage_history = expected_history
+            mock_coverage_history = Mock()
+            mock_coverage_history.copy.return_value = expected_history
+            mock_state.coverage_history = mock_coverage_history
             mock_tracker.state = mock_state
             mock_tracker_class.return_value = mock_tracker
             
@@ -331,7 +336,7 @@ class TestCoverageService:
             service.analyze_coverage(files)
             
             # Assert
-            mock_feedback.info.assert_called_with("Running coverage analysis...")
+            mock_feedback.status_spinner.assert_called_with("Running coverage analysis")
     
     def test_analyze_coverage_logs_warning_when_no_coverage_data(self, project_root, mock_config, mock_feedback):
         """Test that analyze_coverage logs warning when no coverage data is available."""

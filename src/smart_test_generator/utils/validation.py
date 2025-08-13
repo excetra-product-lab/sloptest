@@ -560,10 +560,13 @@ class EnvironmentValidator:
         - local_venv: str | ''
         - messages: List[str]
         """
+        from pathlib import Path
+        project_root = Path(project_root)
         messages: List[str] = []
 
-        # Detect virtualenv activation
-        venv_active = bool(os.environ.get("VIRTUAL_ENV")) or (getattr(sys, 'base_prefix', sys.prefix) != sys.prefix)
+        # Detect virtualenv activation using standard interpreter prefixes
+        # In a venv, sys.prefix differs from sys.base_prefix
+        venv_active = hasattr(sys, 'base_prefix') and (sys.prefix != sys.base_prefix)
 
         # Try importing pytest/coverage in current interpreter
         pytest_importable = True

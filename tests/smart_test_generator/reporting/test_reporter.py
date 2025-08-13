@@ -45,7 +45,7 @@ class TestTestGenerationReporter:
         reporter = TestGenerationReporter(project_root)
         
         # Assert
-        assert reporter.project_root == project_root
+        assert str(reporter.project_root) == project_root
         assert reporter.report_file == Path(project_root) / ".testgen_report.json"
 
     @patch('builtins.open', new_callable=mock_open)

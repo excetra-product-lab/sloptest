@@ -6,7 +6,7 @@ from typing import List, Dict
 from smart_test_generator.services.quality_service import QualityAnalysisService
 from smart_test_generator.models.data_models import (
     TestQualityReport, MutationScore, QualityAndMutationReport,
-    TestGenerationPlan, WeakSpot
+    TestGenerationPlan, WeakSpot, MutationType
 )
 from smart_test_generator.config import Config
 from smart_test_generator.utils.user_feedback import UserFeedback
@@ -102,7 +102,7 @@ class TestQualityAnalysisService:
              patch('smart_test_generator.services.quality_service.get_python_mutation_operators'):
             
             service = QualityAnalysisService(project_root, mock_config)
-            assert service.feedback is None
+            assert isinstance(service.feedback, UserFeedback)
     
     def test_analyze_test_quality_success(self, quality_service):
         """Test successful test quality analysis."""
@@ -336,7 +336,9 @@ class TestQualityAnalysisService:
         plan1 = TestGenerationPlan(
             source_file="file1.py",
             existing_test_files=["test_file1.py"],
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )
@@ -344,7 +346,9 @@ class TestQualityAnalysisService:
         plan2 = TestGenerationPlan(
             source_file="file2.py",
             existing_test_files=["test_file2.py"],
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )
@@ -352,7 +356,9 @@ class TestQualityAnalysisService:
         plan3 = TestGenerationPlan(
             source_file="file3.py",
             existing_test_files=[],  # No existing tests
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )
@@ -421,7 +427,9 @@ class TestQualityAnalysisService:
             TestGenerationPlan(
                 source_file="file1.py",
                 existing_test_files=[],
-                missing_test_elements=[],
+                elements_to_test=[],
+                coverage_before=None,
+                estimated_coverage_after=75.0,
                 quality_score_target=80.0,
                 mutation_score_target=85.0
             )
@@ -437,7 +445,9 @@ class TestQualityAnalysisService:
         quality_service.mutation_threshold = 80.0
         
         weak_spot = WeakSpot(
-            line_number=10,
+            location="file1.py:10:0",
+            mutation_type=MutationType.CONDITIONAL,
+            surviving_mutants=[],
             description="Uncovered branch condition",
             severity="critical",
             suggested_tests=["Test edge case for condition"]
@@ -526,14 +536,18 @@ class TestQualityAnalysisService:
     def test_generate_quality_improvement_suggestions_with_low_scores(self, quality_service):
         """Test generating quality improvement suggestions for low scores."""
         critical_weak_spot = WeakSpot(
-            line_number=10,
+            location="file1.py:10:0",
+            mutation_type=MutationType.CONDITIONAL,
+            surviving_mutants=[],
             description="Critical uncovered branch",
             severity="critical",
             suggested_tests=["Test critical edge case"]
         )
         
         high_weak_spot = WeakSpot(
-            line_number=20,
+            location="file1.py:20:0",
+            mutation_type=MutationType.CONDITIONAL,
+            surviving_mutants=[],
             description="High priority uncovered condition",
             severity="high",
             suggested_tests=["Test high priority case", "Test another high priority case"]
@@ -626,13 +640,17 @@ class TestQualityAnalysisService:
         original_plan = TestGenerationPlan(
             source_file="file1.py",
             existing_test_files=["test_file1.py"],
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )
         
         weak_spot = WeakSpot(
-            line_number=10,
+            location="file1.py:10:0",
+            mutation_type=MutationType.CONDITIONAL,
+            surviving_mutants=[],
             description="Uncovered condition",
             severity="high",
             suggested_tests=["Test edge case"]
@@ -679,7 +697,9 @@ class TestQualityAnalysisService:
         original_plan = TestGenerationPlan(
             source_file="file1.py",
             existing_test_files=["test_file1.py"],
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )
@@ -723,7 +743,9 @@ class TestQualityAnalysisService:
         original_plan = TestGenerationPlan(
             source_file="file1.py",
             existing_test_files=["test_file1.py"],
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )
@@ -767,7 +789,9 @@ class TestQualityAnalysisService:
         original_plan = TestGenerationPlan(
             source_file="file1.py",
             existing_test_files=[],  # No existing tests
-            missing_test_elements=[],
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=75.0,
             quality_score_target=80.0,
             mutation_score_target=85.0
         )

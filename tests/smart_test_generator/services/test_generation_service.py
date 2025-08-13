@@ -26,6 +26,8 @@ class TestTestGenerationService:
         feedback = Mock(spec=UserFeedback)
         feedback.console = Mock()
         feedback.console.print = Mock()
+        feedback.status_spinner.return_value.__enter__ = Mock()
+        feedback.status_spinner.return_value.__exit__ = Mock(return_value=None)
         return feedback
     
     @pytest.fixture
@@ -39,7 +41,9 @@ class TestTestGenerationService:
         element = TestableElement(
             name="test_function",
             type="function",
+            filepath="src/module.py",
             line_number=10,
+            signature="def test_function():",
             complexity=2
         )
         coverage = TestCoverage(
@@ -52,6 +56,7 @@ class TestTestGenerationService:
         )
         return TestGenerationPlan(
             source_file="src/module.py",
+            existing_test_files=["tests/test_module.py"],
             elements_to_test=[element],
             coverage_before=coverage,
             estimated_coverage_after=75.0
@@ -94,7 +99,7 @@ class TestTestGenerationService:
         service = TestGenerationService(project_root, mock_config)
         
         # Assert
-        assert service.feedback is None
+        assert isinstance(service.feedback, UserFeedback)
     
     @patch('smart_test_generator.services.test_generation_service.IncrementalLLMClient')
     @patch('smart_test_generator.services.test_generation_service.ProgressTracker')
@@ -153,6 +158,7 @@ class TestTestGenerationService:
         # First batch fails, second succeeds
         sample_test_plan2 = TestGenerationPlan(
             source_file="src/module2.py",
+            existing_test_files=[],
             elements_to_test=[],
             coverage_before=None,
             estimated_coverage_after=60.0
@@ -255,6 +261,7 @@ class TestTestGenerationService:
         # First file fails, second succeeds
         sample_test_plan2 = TestGenerationPlan(
             source_file="src/module2.py",
+            existing_test_files=[],
             elements_to_test=[],
             coverage_before=None,
             estimated_coverage_after=60.0

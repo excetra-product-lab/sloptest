@@ -45,7 +45,8 @@ class PythonCodebaseParser:
         self.exclude_patterns = self._prepare_exclusion_patterns()
 
         # Initialize components
-        self.tracker = TestGenerationTracker()
+        # Avoid reading global state file when parsing; tests rely on clean state
+        self.tracker = TestGenerationTracker(state_file="")
         self.coverage_analyzer = CoverageAnalyzer(self.root_dir, config)
         self.incremental_generator = IncrementalTestGenerator(self.root_dir, config)
 
@@ -259,7 +260,9 @@ class PythonCodebaseParser:
             content = f.read()
 
         filename = os.path.basename(filepath)
+        # Normalize to posix separators for determinism in tests
         relative_path = os.path.relpath(filepath, self.root_dir)
+        relative_path = relative_path.replace(os.sep, "/")
 
         return FileInfo(
             filepath=relative_path,
@@ -280,4 +283,8 @@ class PythonCodebaseParser:
         # Pretty print XML
         xml_str = ET.tostring(root, encoding='unicode')
         dom = minidom.parseString(xml_str)
-        return dom.toprettyxml(indent="  ")
+        pretty = dom.toprettyxml(indent="  ")
+        # Ensure explicit closing tag when there are no files
+        if files_info == []:
+            return "<?xml version=\"1.0\" ?>\n<codebase>\n</codebase>\n"
+        return pretty

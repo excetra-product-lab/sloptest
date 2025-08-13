@@ -27,7 +27,8 @@ class TestFileWriter:
 
     def __init__(self, root_dir: str, config: Config = None):
         self.root_dir = Path(root_dir).resolve()
-        self.config = config or Config()
+        # Avoid implicit config file I/O during writer operations in tests.
+        self.config = config if config is not None else Config(config_file=None)  # type: ignore[arg-type]
 
     def determine_test_path(self, source_path: str) -> str:
         """Determine where to write the test file."""

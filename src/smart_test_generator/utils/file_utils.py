@@ -235,11 +235,15 @@ class FileUtils:
             FileOperationError: If file cannot be written
         """
         try:
-            # Ensure parent directory exists
-            FileUtils.ensure_directory_exists(file_path.parent)
-
-            with open(file_path, 'w', encoding=encoding) as f:
-                f.write(content)
+            try:
+                # First attempt write directly
+                with open(file_path, 'w', encoding=encoding) as f:
+                    f.write(content)
+            except FileNotFoundError:
+                # Parent directory may not exist; create and retry
+                FileUtils.ensure_directory_exists(file_path.parent)
+                with open(file_path, 'w', encoding=encoding) as f:
+                    f.write(content)
         except PermissionError:
             raise FileOperationError(
                 f"Permission denied writing file: {file_path}",
@@ -626,7 +630,7 @@ class FileUtils:
 
         # Change filename to test_<filename>
         test_filename = f"test_{test_path.name}"
-        return test_path.parent / test_filename
+        return project_root / test_path.parent / test_filename
 
     @staticmethod
     def get_module_name_from_path(file_path: Path, project_root: Path) -> str:

@@ -158,11 +158,16 @@ class Config:
 
     def load_config(self) -> Dict[str, Any]:
         """Load configuration from file or use defaults."""
+        # When config_file is None or falsy, skip file I/O and return defaults
+        if not self.config_file:
+            return self.DEFAULT_CONFIG.copy()
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, 'r') as f:
                     user_config = yaml.safe_load(f)
-                    # Merge with defaults
+                    # Merge with defaults; yaml.safe_load can return None
+                    if not user_config:
+                        return self.DEFAULT_CONFIG.copy()
                     return self._deep_merge(self.DEFAULT_CONFIG, user_config)
             except Exception as e:
                 logger.warning(f"Failed to load config from {self.config_file}: {e}")

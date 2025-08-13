@@ -170,8 +170,8 @@ class CostManager:
         # Remove single-line comments (but keep docstrings)
         content = re.sub(r'^\s*#(?!.*"""|\'\'\').*$', '', content, flags=re.MULTILINE)
         
-        # Remove empty lines after imports
-        content = re.sub(r'(import\s+.*?)\n\n+', r'\1\n', content)
+        # Remove extra blank lines after import statements (including from-imports)
+        content = re.sub(r'((?:from\s+\S+\s+import\s+.*|import\s+.*))\n\n+', r'\1\n', content)
         
         return content.strip()
     

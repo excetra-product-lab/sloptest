@@ -40,14 +40,12 @@ def _make_plan(tmp_path: Path) -> TestGenerationPlan:
     src = tmp_path / "sample.py"
     src.write_text("def add(a, b):\n    return a + b\n")
     cov = TestCoverage(
-        file_path=str(src),
+        filepath=str(src),
         line_coverage=0.0,
         branch_coverage=0.0,
-        covered_lines=set(),
+        missing_lines=[1, 2],
         covered_functions=set(),
-        total_lines=2,
-        total_branches=0,
-        uncovered_functions=["add"],
+        uncovered_functions={"add"},
     )
     return TestGenerationPlan(
         source_file=str(src),

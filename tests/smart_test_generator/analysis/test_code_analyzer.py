@@ -170,7 +170,7 @@ def public_function():
             # Assert
             assert len(result) == 1
             element = result[0]
-            assert element.complexity == 4  # 1 base + if + for + if + while
+            assert element.complexity == 5  # 1 base + if + for + if + while
 
     def test_extract_testable_elements_extracts_dependencies(self):
         """Test that extract_testable_elements extracts function dependencies."""

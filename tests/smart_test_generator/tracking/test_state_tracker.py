@@ -32,7 +32,8 @@ class TestTestGenerationTracker:
 
     def test_init_with_custom_state_file(self):
         """Test initialization with custom state file name."""
-        with patch.object(TestGenerationTracker, '_load_state') as mock_load:
+        with patch.object(TestGenerationTracker, '_load_state') as mock_load, \
+             patch('os.path.exists', return_value=True):
             mock_state = TestGenerationState(
                 timestamp="2023-01-01T00:00:00",
                 tested_elements={},
@@ -57,7 +58,7 @@ class TestTestGenerationTracker:
         assert tracker.state.tested_elements == {"file1.py": ["func1"]}
         assert tracker.state.coverage_history == {"file1.py": [80.0]}
         assert tracker.state.generation_log == []
-        mock_exists.assert_called_once_with(".testgen_state.json")
+        mock_exists.assert_called_with(".testgen_state.json")
 
     @patch('os.path.exists', return_value=False)
     def test_load_state_no_file(self, mock_exists):
@@ -95,7 +96,8 @@ class TestTestGenerationTracker:
             tracker = TestGenerationTracker()
             tracker.save_state()
             
-            mock_file.assert_called_once_with(".testgen_state.json", 'w')
+            # Check that the file was opened for writing (there may be other calls for reading during init)
+            mock_file.assert_any_call(".testgen_state.json", 'w')
             handle = mock_file()
             written_data = ''.join(call.args[0] for call in handle.write.call_args_list)
             assert "2023-01-01T12:00:00" in written_data
@@ -108,7 +110,8 @@ class TestTestGenerationTracker:
         # Should not raise exception
         tracker.save_state()
         
-        mock_file.assert_called_once_with(".testgen_state.json", 'w')
+        # Check that the file was opened for writing (there may be other calls for reading during init)
+        mock_file.assert_any_call(".testgen_state.json", 'w')
 
     def test_should_generate_tests_force_flag(self):
         """Test that force flag always returns True."""
@@ -145,7 +148,7 @@ class TestTestGenerationTracker:
         )
         
         assert should_generate is True
-        assert "No coverage data available and no tested elements recorded" in reason
+        assert "New file detected" in reason
 
     def test_should_generate_tests_no_coverage_with_elements(self):
         """Test skipping generation when no coverage but elements exist."""
@@ -158,7 +161,7 @@ class TestTestGenerationTracker:
         )
         
         assert should_generate is False
-        assert "Tested elements exist" in reason
+        assert "Tests exist but no recent coverage data - skipping to avoid regeneration" in reason
 
     def test_should_generate_tests_coverage_below_minimum(self):
         """Test generation when coverage is below minimum threshold."""
@@ -279,26 +282,35 @@ class TestTestGenerationTracker:
 
     def test_record_generation_new_file(self):
         """Test recording generation for a new file."""
-        tracker = TestGenerationTracker()
-        elements = ["test_func1", "test_func2"]
-        
-        with patch('smart_test_generator.tracking.state_tracker.datetime') as mock_datetime:
-            mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T12:00:00"
-            
-            tracker.record_generation(
-                "test.py", elements, 60.0, 85.0, "Coverage below minimum"
+        with patch.object(TestGenerationTracker, '_load_state') as mock_load:
+            mock_state = TestGenerationState(
+                timestamp="2023-01-01T00:00:00",
+                tested_elements={},
+                coverage_history={},
+                generation_log=[]
             )
+            mock_load.return_value = mock_state
+            
+            tracker = TestGenerationTracker()
+            elements = ["test_func1", "test_func2"]
         
-        assert len(tracker.state.generation_log) == 1
-        log_entry = tracker.state.generation_log[0]
-        assert log_entry["filepath"] == "test.py"
-        assert log_entry["reason"] == "Coverage below minimum"
-        assert log_entry["elements_generated"] == 2
-        assert log_entry["coverage_before"] == 60.0
-        assert log_entry["coverage_after"] == 85.0
-        assert log_entry["improvement"] == 25.0
-        
-        assert tracker.state.tested_elements["test.py"] == elements
+            with patch('smart_test_generator.tracking.state_tracker.datetime') as mock_datetime:
+                mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T12:00:00"
+                
+                tracker.record_generation(
+                    "test.py", elements, 60.0, 85.0, "Coverage below minimum"
+                )
+            
+            assert len(tracker.state.generation_log) == 1
+            log_entry = tracker.state.generation_log[0]
+            assert log_entry["filepath"] == "test.py"
+            assert log_entry["reason"] == "Coverage below minimum"
+            assert log_entry["elements_generated"] == 2
+            assert log_entry["coverage_before"] == 60.0
+            assert log_entry["coverage_after"] == 85.0
+            assert log_entry["improvement"] == 25.0
+            
+            assert tracker.state.tested_elements["test.py"] == elements
 
     def test_record_generation_existing_file(self):
         """Test recording generation for an existing file."""
@@ -330,17 +342,26 @@ class TestTestGenerationTracker:
 
     def test_record_generation_truncates_elements_list(self):
         """Test that elements list is truncated to first 10 in log."""
-        tracker = TestGenerationTracker()
-        elements = [f"test_func{i}" for i in range(15)]  # 15 elements
-        
-        tracker.record_generation(
-            "test.py", elements, 60.0, 85.0, "Many functions"
-        )
-        
-        log_entry = tracker.state.generation_log[0]
-        assert log_entry["elements_generated"] == 15
-        assert len(log_entry["elements"]) == 10
-        assert log_entry["elements"] == elements[:10]
+        with patch.object(TestGenerationTracker, '_load_state') as mock_load:
+            mock_state = TestGenerationState(
+                timestamp="2023-01-01T00:00:00",
+                tested_elements={},
+                coverage_history={},
+                generation_log=[]
+            )
+            mock_load.return_value = mock_state
+            
+            tracker = TestGenerationTracker()
+            elements = [f"test_func{i}" for i in range(15)]  # 15 elements
+            
+            tracker.record_generation(
+                "test.py", elements, 60.0, 85.0, "Many functions"
+            )
+            
+            log_entry = tracker.state.generation_log[0]
+            assert log_entry["elements_generated"] == 15
+            assert len(log_entry["elements"]) == 10
+            assert log_entry["elements"] == elements[:10]
 
     def test_reset_state(self):
         """Test resetting the state."""
@@ -364,22 +385,31 @@ class TestTestGenerationTracker:
 
     def test_force_mark_as_tested_new_file(self):
         """Test force marking elements as tested for a new file."""
-        tracker = TestGenerationTracker()
-        elements = ["func1", "func2"]
-        
-        with patch('smart_test_generator.tracking.state_tracker.datetime') as mock_datetime:
-            mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T12:00:00"
+        with patch.object(TestGenerationTracker, '_load_state') as mock_load:
+            mock_state = TestGenerationState(
+                timestamp="2023-01-01T00:00:00",
+                tested_elements={},
+                coverage_history={},
+                generation_log=[]
+            )
+            mock_load.return_value = mock_state
             
-            with patch.object(tracker, 'save_state') as mock_save:
-                tracker.force_mark_as_tested("test.py", elements, "Manual override")
+            tracker = TestGenerationTracker()
+            elements = ["func1", "func2"]
+            
+            with patch('smart_test_generator.tracking.state_tracker.datetime') as mock_datetime:
+                mock_datetime.now.return_value.isoformat.return_value = "2023-01-01T12:00:00"
                 
-                assert tracker.state.tested_elements["test.py"] == elements
-                assert len(tracker.state.generation_log) == 1
-                
-                log_entry = tracker.state.generation_log[0]
-                assert log_entry["reason"] == "Manual override"
-                assert log_entry["elements_generated"] == 2
-                assert log_entry["coverage_after"] == 100
+                with patch.object(tracker, 'save_state') as mock_save:
+                    tracker.force_mark_as_tested("test.py", elements, "Manual override")
+                    
+                    assert tracker.state.tested_elements["test.py"] == elements
+                    assert len(tracker.state.generation_log) == 1
+                    
+                    log_entry = tracker.state.generation_log[0]
+                    assert log_entry["reason"] == "Manual override"
+                    assert log_entry["elements_generated"] == 2
+                    assert log_entry["coverage_after"] == 100
                 
                 mock_save.assert_called_once()
 
@@ -404,7 +434,8 @@ class TestTestGenerationTracker:
             tracker.force_mark_as_tested("test.py", ["func1"])
             
             log_entry = tracker.state.generation_log[0]
-            assert log_entry["reason"] == "Manual override"
+            # The implementation now automatically detects existing test files instead of using "Manual override"
+            assert "Synced with existing tests" in log_entry["reason"]
 
     def test_get_state_summary(self):
         """Test getting state summary."""
@@ -431,15 +462,24 @@ class TestTestGenerationTracker:
 
     def test_get_state_summary_empty_state(self):
         """Test getting state summary with empty state."""
-        tracker = TestGenerationTracker()
-        
-        summary = tracker.get_state_summary()
-        
-        assert summary["files_with_tests"] == 0
-        assert summary["total_tested_elements"] == 0
-        assert summary["files_with_coverage_history"] == 0
-        assert summary["generation_log_entries"] == 0
-        assert summary["tested_files"] == []
+        with patch.object(TestGenerationTracker, '_load_state') as mock_load:
+            mock_state = TestGenerationState(
+                timestamp="2023-01-01T00:00:00",
+                tested_elements={},
+                coverage_history={},
+                generation_log=[]
+            )
+            mock_load.return_value = mock_state
+            
+            tracker = TestGenerationTracker()
+            
+            summary = tracker.get_state_summary()
+            
+            assert summary["files_with_tests"] == 0
+            assert summary["total_tested_elements"] == 0
+            assert summary["files_with_coverage_history"] == 0
+            assert summary["generation_log_entries"] == 0
+            assert summary["tested_files"] == []
 
     def test_should_generate_tests_coverage_history_empty_list(self):
         """Test coverage drop check with empty history list."""

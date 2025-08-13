@@ -599,10 +599,10 @@ result = value if condition else default
 class TestGetPythonQualityAnalyzers:
     """Test get_python_quality_analyzers function."""
     
-    @patch('smart_test_generator.analysis.python_analyzers.EdgeCaseAnalyzer')
-    @patch('smart_test_generator.analysis.python_analyzers.AssertionStrengthAnalyzer')
-    @patch('smart_test_generator.analysis.python_analyzers.MaintainabilityAnalyzer')
-    @patch('smart_test_generator.analysis.python_analyzers.BugDetectionAnalyzer')
+    @patch('smart_test_generator.analysis.quality_analyzer.EdgeCaseAnalyzer')
+    @patch('smart_test_generator.analysis.quality_analyzer.AssertionStrengthAnalyzer')
+    @patch('smart_test_generator.analysis.quality_analyzer.MaintainabilityAnalyzer')
+    @patch('smart_test_generator.analysis.quality_analyzer.BugDetectionAnalyzer')
     def test_returns_all_quality_analyzers(self, mock_bug, mock_maint, mock_assert, mock_edge):
         """Test that function returns all quality analyzers including Python-specific ones."""
         # Arrange
@@ -638,11 +638,11 @@ class TestGetPythonQualityAnalyzers:
 class TestGetPythonMutationOperators:
     """Test get_python_mutation_operators function."""
     
-    @patch('smart_test_generator.analysis.python_analyzers.ArithmeticOperatorMutator')
-    @patch('smart_test_generator.analysis.python_analyzers.ComparisonOperatorMutator')
-    @patch('smart_test_generator.analysis.python_analyzers.LogicalOperatorMutator')
-    @patch('smart_test_generator.analysis.python_analyzers.ConstantValueMutator')
-    @patch('smart_test_generator.analysis.python_analyzers.BoundaryValueMutator')
+    @patch('smart_test_generator.analysis.mutation_engine.ArithmeticOperatorMutator')
+    @patch('smart_test_generator.analysis.mutation_engine.ComparisonOperatorMutator')
+    @patch('smart_test_generator.analysis.mutation_engine.LogicalOperatorMutator')
+    @patch('smart_test_generator.analysis.mutation_engine.ConstantValueMutator')
+    @patch('smart_test_generator.analysis.mutation_engine.BoundaryValueMutator')
     def test_returns_all_mutation_operators(self, mock_boundary, mock_constant, mock_logical, mock_comparison, mock_arithmetic):
         """Test that function returns all mutation operators including Python-specific ones."""
         # Arrange

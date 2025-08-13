@@ -158,10 +158,12 @@ class TestIncrementalTestGenerator:
     def test_estimate_coverage_improvement_with_current_coverage(self, generator):
         """Test _estimate_coverage_improvement with existing coverage."""
         coverage = TestCoverage(
-            file_path="test.py",
+            filepath="test.py",
             line_coverage=60.0,
             branch_coverage=50.0,
-            uncovered_functions=[]
+            missing_lines=[],
+            covered_functions=set(),
+            uncovered_functions=set()
         )
         
         result = generator._estimate_coverage_improvement(10, 2, coverage)
@@ -171,10 +173,12 @@ class TestIncrementalTestGenerator:
     def test_estimate_coverage_improvement_caps_at_100(self, generator):
         """Test _estimate_coverage_improvement caps result at 100%."""
         coverage = TestCoverage(
-            file_path="test.py",
+            filepath="test.py",
             line_coverage=95.0,
             branch_coverage=90.0,
-            uncovered_functions=[]
+            missing_lines=[],
+            covered_functions=set(),
+            uncovered_functions=set()
         )
         
         result = generator._estimate_coverage_improvement(10, 8, coverage)

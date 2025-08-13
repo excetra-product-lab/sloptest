@@ -13,8 +13,8 @@ class TestGenerationReporter:
     """Generate reports about test generation."""
 
     def __init__(self, project_root: Path):
-        self.project_root = project_root
-        self.report_file = project_root / ".testgen_report.json"
+        self.project_root = Path(project_root)
+        self.report_file = self.project_root / ".testgen_report.json"
 
     def generate_report(self, results: Dict[str, Any]) -> str:
         """Create detailed report."""
@@ -25,7 +25,7 @@ class TestGenerationReporter:
                 "tests_generated": results.get("tests_generated", 0),
                 "coverage_before": results.get("coverage_before", 0),
                 "coverage_after": results.get("coverage_after", 0),
-                "coverage_improvement": results.get("coverage_after", 0) - results.get("coverage_before", 0)
+                "coverage_improvement": round(results.get("coverage_after", 0) - results.get("coverage_before", 0), 1)
             },
             "details": results.get("details", [])
         }

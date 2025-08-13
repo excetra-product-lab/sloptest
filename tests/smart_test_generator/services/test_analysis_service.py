@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch, MagicMock
 from typing import Dict, List
 
 from smart_test_generator.services.analysis_service import AnalysisService
-from smart_test_generator.models.data_models import TestGenerationPlan, TestCoverage, QualityAndMutationReport
+from smart_test_generator.models.data_models import TestGenerationPlan, TestCoverage, QualityAndMutationReport, TestableElement, TestQualityReport, MutationScore
 from smart_test_generator.config import Config
 from smart_test_generator.utils.user_feedback import UserFeedback
 
@@ -22,7 +22,10 @@ class TestAnalysisService:
     @pytest.fixture
     def mock_feedback(self):
         """Create a mock feedback object."""
-        return Mock(spec=UserFeedback)
+        feedback = Mock(spec=UserFeedback)
+        feedback.status_spinner.return_value.__enter__ = Mock()
+        feedback.status_spinner.return_value.__exit__ = Mock(return_value=None)
+        return feedback
     
     @pytest.fixture
     def target_dir(self, tmp_path):
@@ -78,7 +81,7 @@ class TestAnalysisService:
             assert service.target_dir == target_dir
             assert service.project_root == project_root
             assert service.config == mock_config
-            assert service.feedback is None
+            assert isinstance(service.feedback, UserFeedback)
     
     def test_find_python_files_returns_parser_results(self, analysis_service):
         """Test that find_python_files returns results from parser."""
@@ -116,7 +119,7 @@ class TestAnalysisService:
         files_to_process, reasons, returned_coverage = analysis_service.analyze_files_for_generation(files)
         
         assert files_to_process == ['file1.py']
-        assert reasons == {'file1.py': 'Low coverage'}
+        assert reasons == {'file1.py': 'Low coverage (Note: Found 0 existing test file(s): [])'}
         assert returned_coverage == coverage_data
         analysis_service.coverage_service.analyze_coverage.assert_called_once_with(files)
     
@@ -131,7 +134,7 @@ class TestAnalysisService:
         files_to_process, reasons, returned_coverage = analysis_service.analyze_files_for_generation(files, force=True)
         
         assert files_to_process == ['file1.py']
-        assert reasons == {'file1.py': 'Forced generation'}
+        assert reasons == {'file1.py': 'Forced generation (Note: Found 0 existing test file(s): [])'}
         analysis_service.tracker.should_generate_tests.assert_called_once_with(
             'file1.py', coverage_data['file1.py'], analysis_service.config, True
         )
@@ -161,8 +164,25 @@ class TestAnalysisService:
             'file2.py': TestCoverage(filepath='file2.py', line_coverage=70.0, branch_coverage=65.0, missing_lines=[], covered_functions=set(), uncovered_functions=set())
         }
         
-        plan1 = TestGenerationPlan(source_file='file1.py', test_file='test_file1.py', elements_to_test=['func1', 'func2'])
-        plan2 = TestGenerationPlan(source_file='file2.py', test_file='test_file2.py', elements_to_test=['func3'])
+        plan1 = TestGenerationPlan(
+            source_file='file1.py', 
+            existing_test_files=['test_file1.py'], 
+            elements_to_test=[
+                TestableElement(name='func1', type='function', filepath='file1.py', line_number=1, signature='def func1():'),
+                TestableElement(name='func2', type='function', filepath='file1.py', line_number=2, signature='def func2():')
+            ],
+            coverage_before=None,
+            estimated_coverage_after=80.0
+        )
+        plan2 = TestGenerationPlan(
+            source_file='file2.py', 
+            existing_test_files=['test_file2.py'], 
+            elements_to_test=[
+                TestableElement(name='func3', type='function', filepath='file2.py', line_number=1, signature='def func3():')
+            ],
+            coverage_before=None,
+            estimated_coverage_after=75.0
+        )
         
         analysis_service.test_generator.generate_test_plan.side_effect = [plan1, plan2]
         analysis_service.quality_service.update_test_plans_with_quality_insights.return_value = [plan1, plan2]
@@ -181,8 +201,22 @@ class TestAnalysisService:
             'file2.py': TestCoverage(filepath='file2.py', line_coverage=70.0, branch_coverage=65.0, missing_lines=[], covered_functions=set(), uncovered_functions=set())
         }
         
-        plan1 = TestGenerationPlan(source_file='file1.py', test_file='test_file1.py', elements_to_test=['func1'])
-        plan2 = TestGenerationPlan(source_file='file2.py', test_file='test_file2.py', elements_to_test=[])
+        plan1 = TestGenerationPlan(
+            source_file='file1.py', 
+            existing_test_files=['test_file1.py'], 
+            elements_to_test=[
+                TestableElement(name='func1', type='function', filepath='file1.py', line_number=1, signature='def func1():')
+            ],
+            coverage_before=None,
+            estimated_coverage_after=75.0
+        )
+        plan2 = TestGenerationPlan(
+            source_file='file2.py', 
+            existing_test_files=['test_file2.py'], 
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=0.0
+        )
         
         analysis_service.test_generator.generate_test_plan.side_effect = [plan1, plan2]
         analysis_service.quality_service.update_test_plans_with_quality_insights.return_value = [plan1]
@@ -197,7 +231,13 @@ class TestAnalysisService:
         files = ['file1.py']
         coverage_data = {'file1.py': TestCoverage(filepath='file1.py', line_coverage=50.0, branch_coverage=40.0, missing_lines=[], covered_functions=set(), uncovered_functions=set())}
         
-        empty_plan = TestGenerationPlan(source_file='file1.py', test_file='test_file1.py', elements_to_test=[])
+        empty_plan = TestGenerationPlan(
+            source_file='file1.py', 
+            existing_test_files=['test_file1.py'], 
+            elements_to_test=[],
+            coverage_before=None,
+            estimated_coverage_after=0.0
+        )
         analysis_service.test_generator.generate_test_plan.return_value = empty_plan
         
         result = analysis_service.create_test_plans(files, coverage_data)
@@ -208,13 +248,60 @@ class TestAnalysisService:
     def test_analyze_test_quality_returns_quality_reports(self, analysis_service):
         """Test that analyze_test_quality returns quality reports for test plans."""
         test_plans = [
-            TestGenerationPlan(source_file='file1.py', test_file='test_file1.py', elements_to_test=['func1']),
-            TestGenerationPlan(source_file='file2.py', test_file='test_file2.py', elements_to_test=['func2'])
+            TestGenerationPlan(
+                source_file='file1.py', 
+                existing_test_files=['test_file1.py'], 
+                elements_to_test=[
+                    TestableElement(name='func1', type='function', filepath='file1.py', line_number=1, signature='def func1():')
+                ],
+                coverage_before=None,
+                estimated_coverage_after=75.0
+            ),
+            TestGenerationPlan(
+                source_file='file2.py', 
+                existing_test_files=['test_file2.py'], 
+                elements_to_test=[
+                    TestableElement(name='func2', type='function', filepath='file2.py', line_number=1, signature='def func2():')
+                ],
+                coverage_before=None,
+                estimated_coverage_after=75.0
+            )
         ]
         
+        # Create mock reports for testing
+        from smart_test_generator.models.data_models import TestQualityReport, MutationScore
+        
+        mock_quality_report1 = TestQualityReport(test_file='test_file1.py', overall_score=75.0)
+        mock_mutation_score1 = MutationScore(
+            source_file='file1.py', test_files=['test_file1.py'], 
+            total_mutants=10, killed_mutants=8, surviving_mutants=2, 
+            timeout_mutants=0, error_mutants=0, mutation_score=80.0, mutation_score_effective=80.0
+        )
+        
+        mock_quality_report2 = TestQualityReport(test_file='test_file2.py', overall_score=70.0)
+        mock_mutation_score2 = MutationScore(
+            source_file='file2.py', test_files=['test_file2.py'], 
+            total_mutants=10, killed_mutants=7, surviving_mutants=3, 
+            timeout_mutants=0, error_mutants=0, mutation_score=70.0, mutation_score_effective=70.0
+        )
+        
         expected_reports = {
-            'file1.py': QualityAndMutationReport(source_file='file1.py', test_file='test_file1.py'),
-            'file2.py': QualityAndMutationReport(source_file='file2.py', test_file='test_file2.py')
+            'file1.py': QualityAndMutationReport(
+                source_file='file1.py', 
+                test_files=['test_file1.py'],
+                quality_report=mock_quality_report1,
+                mutation_score=mock_mutation_score1,
+                overall_rating='good',
+                confidence_level=0.8
+            ),
+            'file2.py': QualityAndMutationReport(
+                source_file='file2.py', 
+                test_files=['test_file2.py'],
+                quality_report=mock_quality_report2,
+                mutation_score=mock_mutation_score2,
+                overall_rating='fair',
+                confidence_level=0.7
+            )
         }
         
         analysis_service.quality_service.analyze_test_plans_quality.return_value = expected_reports
@@ -239,8 +326,32 @@ class TestAnalysisService:
     def test_generate_quality_gaps_report_creates_formatted_report(self, analysis_service):
         """Test that generate_quality_gaps_report creates a formatted report with gaps."""
         quality_reports = {
-            'file1.py': QualityAndMutationReport(source_file='file1.py', test_file='test_file1.py'),
-            'file2.py': QualityAndMutationReport(source_file='file2.py', test_file='test_file2.py')
+            'file1.py': QualityAndMutationReport(
+                source_file='file1.py',
+                test_files=['test_file1.py'],
+                quality_report=TestQualityReport(test_file='test_file1.py', overall_score=80.0),
+                mutation_score=MutationScore(
+                    source_file='file1.py', test_files=['test_file1.py'], total_mutants=10, killed_mutants=8,
+                    surviving_mutants=2, timeout_mutants=0, error_mutants=0, mutation_score=80.0,
+                    mutation_score_effective=80.0, mutant_results=[], weak_spots=[], mutation_distribution={},
+                    total_execution_time=0.0, average_test_time=0.0
+                ),
+                overall_rating='good',
+                confidence_level=0.8
+            ),
+            'file2.py': QualityAndMutationReport(
+                source_file='file2.py',
+                test_files=['test_file2.py'],
+                quality_report=TestQualityReport(test_file='test_file2.py', overall_score=75.0),
+                mutation_score=MutationScore(
+                    source_file='file2.py', test_files=['test_file2.py'], total_mutants=8, killed_mutants=6,
+                    surviving_mutants=2, timeout_mutants=0, error_mutants=0, mutation_score=75.0,
+                    mutation_score_effective=75.0, mutant_results=[], weak_spots=[], mutation_distribution={},
+                    total_execution_time=0.0, average_test_time=0.0
+                ),
+                overall_rating='fair',
+                confidence_level=0.7
+            )
         }
         
         gaps = {
@@ -263,7 +374,19 @@ class TestAnalysisService:
     def test_generate_quality_gaps_report_returns_success_message_when_no_gaps(self, analysis_service):
         """Test that generate_quality_gaps_report returns success message when no gaps found."""
         quality_reports = {
-            'file1.py': QualityAndMutationReport(source_file='file1.py', test_file='test_file1.py')
+            'file1.py': QualityAndMutationReport(
+                source_file='file1.py',
+                test_files=['test_file1.py'],
+                quality_report=TestQualityReport(test_file='test_file1.py', overall_score=95.0),
+                mutation_score=MutationScore(
+                    source_file='file1.py', test_files=['test_file1.py'], total_mutants=10, killed_mutants=10,
+                    surviving_mutants=0, timeout_mutants=0, error_mutants=0, mutation_score=100.0,
+                    mutation_score_effective=100.0, mutant_results=[], weak_spots=[], mutation_distribution={},
+                    total_execution_time=0.0, average_test_time=0.0
+                ),
+                overall_rating='excellent',
+                confidence_level=0.95
+            )
         }
         
         analysis_service.quality_service.identify_quality_gaps.return_value = {}
@@ -278,8 +401,25 @@ class TestAnalysisService:
         all_files = ['file1.py', 'file2.py', 'file3.py']
         files_to_process = ['file1.py', 'file2.py']
         test_plans = [
-            TestGenerationPlan(source_file='file1.py', test_file='test_file1.py', elements_to_test=['func1', 'func2']),
-            TestGenerationPlan(source_file='file2.py', test_file='test_file2.py', elements_to_test=['func3'])
+            TestGenerationPlan(
+                source_file='file1.py', 
+                existing_test_files=['test_file1.py'], 
+                elements_to_test=[
+                    TestableElement(name='func1', type='function', filepath='file1.py', line_number=1, signature='def func1():'),
+                    TestableElement(name='func2', type='function', filepath='file1.py', line_number=2, signature='def func2():')
+                ],
+                coverage_before=None,
+                estimated_coverage_after=80.0
+            ),
+            TestGenerationPlan(
+                source_file='file2.py', 
+                existing_test_files=['test_file2.py'], 
+                elements_to_test=[
+                    TestableElement(name='func3', type='function', filepath='file2.py', line_number=1, signature='def func3():')
+                ],
+                coverage_before=None,
+                estimated_coverage_after=75.0
+            )
         ]
         reasons = {
             'file1.py': 'Low coverage',
