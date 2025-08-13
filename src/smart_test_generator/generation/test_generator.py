@@ -100,7 +100,8 @@ class IncrementalTestGenerator:
                     # Look for test functions that might test this element
                     if f"test_{element_name.lower()}" in content.lower():
                         return True
-                    if f"test{element_name}" in content:
+                    # Check camelCase pattern (case-insensitive for flexibility)
+                    if f"test{element_name}".lower() in content.lower():
                         return True
                     # Check if element name appears in test file (might be called/tested)
                     if element_name in content:

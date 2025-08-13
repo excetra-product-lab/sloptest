@@ -206,6 +206,9 @@ class TestSmartTestGeneratorApp:
             azure_endpoint=None,
             azure_api_key=None,
             azure_deployment=None,
+            bedrock_role_arn=None,
+            bedrock_inference_profile=None,
+            bedrock_region=None,
             feedback=app.feedback
         )
         
@@ -312,6 +315,9 @@ class TestSmartTestGeneratorApp:
             azure_endpoint='https://test.openai.azure.com',
             azure_api_key='azure-key',
             azure_deployment='gpt-4',
+            bedrock_role_arn=None,
+            bedrock_inference_profile=None,
+            bedrock_region=None,
             feedback=app.feedback
         )
     

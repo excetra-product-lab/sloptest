@@ -169,6 +169,8 @@ class TestQualityAnalysisService:
             mutation_score_effective=80.0
         )
         
+        # Enable mutation testing for this test
+        quality_service.enable_mutation_testing = True
         quality_service.mutation_engine.run_mutation_testing.return_value = expected_score
         
         result = quality_service.run_mutation_testing(source_file, test_files)
@@ -204,6 +206,9 @@ class TestQualityAnalysisService:
         """Test comprehensive quality analysis with mutation testing enabled."""
         source_file = "example.py"
         test_files = ["test_example.py"]
+        
+        # Enable mutation testing for this test
+        quality_service.enable_mutation_testing = True
         
         quality_report = TestQualityReport(
             test_file=test_files[0],

@@ -316,12 +316,11 @@ class TestAnalysisService:
         test_plans = []
         expected_reports = {}
         
-        analysis_service.quality_service.analyze_test_plans_quality.return_value = expected_reports
-        
         result = analysis_service.analyze_test_quality(test_plans)
         
         assert result == expected_reports
-        analysis_service.quality_service.analyze_test_plans_quality.assert_called_once_with(test_plans)
+        # Method should not be called when test_plans is empty
+        analysis_service.quality_service.analyze_test_plans_quality.assert_not_called()
     
     def test_generate_quality_gaps_report_creates_formatted_report(self, analysis_service):
         """Test that generate_quality_gaps_report creates a formatted report with gaps."""
@@ -513,7 +512,7 @@ class TestAnalysisService:
         result = analysis_service.get_generation_status()
         
         # Should only contain the last 10 entries (5-14)
-        assert 'file05.py' in result
+        assert 'file5.py' in result
         assert 'file14.py' in result
-        assert 'file04.py' not in result
-        assert 'file00.py' not in result
+        assert 'file4.py' not in result
+        assert 'file0.py' not in result

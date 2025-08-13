@@ -178,10 +178,13 @@ class TestGenerationService(BaseService):
                         
                         if test_content:
                             # Write test file immediately
-                            result = self._write_single_test_file(plan, test_content, generation_reasons or {})
+                            result = self._write_single_test_file(plan.source_file, test_content)
                             
                             if result.success:
                                 written_files.append(result.source_path)
+                                # Update tracking like in batch mode
+                                reason = generation_reasons.get(plan.source_file, "Generated") if generation_reasons else "Generated"
+                                self._update_tracking_incremental(plan, reason)
                                 self.feedback.success(f"✓ {rel_path}")
                             else:
                                 failed_files.append(result.source_path)
