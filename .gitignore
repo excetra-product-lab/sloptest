@@ -46,6 +46,7 @@ coverage.xml
 .testgen_state.json
 .testgen_report.json
 .testgen.yml
+.artifacts/
 
 # OS
 .DS_Store
