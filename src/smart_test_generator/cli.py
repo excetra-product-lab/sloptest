@@ -714,7 +714,7 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             feedback.sophisticated_progress("Initializing AI test generation", f"Using {ai_model_label}")
             
             # Preflight: validate environment for generation/tests
-            validate_generation_environment(project_dir, config, feedback)
+            validate_generation_environment(app.project_root, app.config, feedback)
 
             # Generate tests with sophisticated progress tracking
             result = app.run_generate_mode(
