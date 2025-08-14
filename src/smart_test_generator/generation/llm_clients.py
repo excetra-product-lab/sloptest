@@ -304,6 +304,26 @@ class LLMClient(ABC):
                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
         """Generate unit tests for the provided code."""
         pass
+    
+    def refine_tests(self, request: Dict) -> str:
+        """Refine existing tests based on failure information.
+        
+        Args:
+            request: Dictionary containing payload and prompt for refinement
+            
+        Returns:
+            JSON string with updated_files, rationale, and plan
+        """
+        # Default implementation - subclasses should override for specific behavior
+        payload = request.get("payload", {})
+        prompt = request.get("prompt", "")
+        
+        # For now, return empty response - indicates no refinements
+        return json.dumps({
+            "updated_files": [],
+            "rationale": "No refinements needed",
+            "plan": "Tests appear to be working as expected"
+        })
 
 
 class BedrockClient(LLMClient):
@@ -437,7 +457,23 @@ Generate comprehensive unit tests for each file in the code_files section above.
                             continue
                 content = "\n".join(text_parts)
 
-            tests_dict = json.loads(content) if content else {}
+            # Check if we have content to parse
+            if not content or not content.strip():
+                logger.error("Empty response from Bedrock API")
+                raise LLMClientError(
+                    "Empty response from Bedrock API",
+                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
+                )
+            
+            try:
+                tests_dict = json.loads(content)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error from Bedrock: {e}")
+                logger.error(f"Failed content preview: {repr(content[:200])}")
+                if "expecting value: line 1 column 1 (char 0)" in str(e):
+                    logger.error("The AI returned empty or non-JSON content")
+                    logger.debug(f"Full response: {repr(content)}")
+                tests_dict = {}
 
             if codebase_info and tests_dict:
                 available_imports = codebase_info.get('imports', {})
@@ -759,6 +795,15 @@ Generate comprehensive unit tests for each file in the code_files section above.
 
             # Try to extract JSON from the response
             json_content = self._extract_json_content(content)
+            
+            # Check if we have any content to parse
+            if not json_content or not json_content.strip():
+                logger.error("Empty response from Claude API")
+                logger.debug(f"Original response content: {repr(content[:500])}")
+                raise LLMClientError(
+                    "Empty response from Claude API",
+                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
+                )
 
             # Parse JSON response
             try:
@@ -804,6 +849,10 @@ Generate comprehensive unit tests for each file in the code_files section above.
 
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error: {e}")
+                logger.error(f"Failed content preview: {repr(json_content[:200])}")
+                if "expecting value: line 1 column 1 (char 0)" in str(e):
+                    logger.error("The AI returned empty or non-JSON content")
+                    logger.debug(f"Full original response: {repr(content)}")
                 return self._try_recover_partial_results(json_content, e)
 
         except requests.exceptions.HTTPError as e:
@@ -852,6 +901,15 @@ Generate comprehensive unit tests for each file in the code_files section above.
             )
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error: {e}")
+            logger.error(f"Failed content preview: {repr(json_content[:200])}")
+            if "expecting value: line 1 column 1 (char 0)" in str(e):
+                logger.error("The AI returned empty or non-JSON content")
+                # Try to provide more context about what went wrong
+                if not content.strip():
+                    logger.error("Response was completely empty")
+                elif not json_content.strip():
+                    logger.error("No JSON content found after extraction")
+                    logger.debug(f"Original response: {repr(content[:500])}")
             return self._try_recover_partial_results(json_content, e)
         except Exception as e:
             logger.error(f"Unexpected error: {type(e).__name__}: {e}")

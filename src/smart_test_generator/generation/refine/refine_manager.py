@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import random
 import time
 from dataclasses import dataclass
@@ -12,6 +13,8 @@ from typing import Dict, List, Any
 from smart_test_generator.config import Config
 from smart_test_generator.generation.llm_clients import LLMClient
 from smart_test_generator.generation.refine.payload_builder import build_refine_prompt
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -63,9 +66,22 @@ def run_refinement_cycle(
         (iter_dir / "llm_response.json").write_text(response_text)
 
         try:
-            data = json.loads(response_text)
-            updated_files = data.get("updated_files", [])
-        except Exception:
+            # Check if we have content to parse
+            if not response_text or not response_text.strip():
+                logger.warning(f"Empty response from LLM for refinement iteration {attempt}")
+                updated_files = []
+            else:
+                data = json.loads(response_text)
+                updated_files = data.get("updated_files", [])
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error in refinement iteration {attempt}: {e}")
+            logger.error(f"Failed content preview: {repr(response_text[:200])}")
+            if "expecting value: line 1 column 1 (char 0)" in str(e):
+                logger.error("The AI returned empty or non-JSON content for refinement")
+                logger.debug(f"Full response: {repr(response_text)}")
+            updated_files = []
+        except Exception as e:
+            logger.error(f"Unexpected error parsing refinement response: {e}")
             updated_files = []
 
         if not updated_files and stop_on_no_change:
