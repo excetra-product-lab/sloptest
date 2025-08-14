@@ -76,7 +76,7 @@ def run_refinement_cycle(
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error in refinement iteration {attempt}: {e}")
             logger.error(f"Failed content preview: {repr(response_text[:200])}")
-            if "expecting value: line 1 column 1 (char 0)" in str(e):
+            if "Expecting value: line 1 column 1 (char 0)" in str(e):
                 logger.error("The AI returned empty or non-JSON content for refinement")
                 logger.debug(f"Full response: {repr(response_text)}")
             updated_files = []

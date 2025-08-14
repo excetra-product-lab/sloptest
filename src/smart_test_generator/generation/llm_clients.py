@@ -470,7 +470,7 @@ Generate comprehensive unit tests for each file in the code_files section above.
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error from Bedrock: {e}")
                 logger.error(f"Failed content preview: {repr(content[:200])}")
-                if "expecting value: line 1 column 1 (char 0)" in str(e):
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
                     logger.error("The AI returned empty or non-JSON content")
                     logger.debug(f"Full response: {repr(content)}")
                 tests_dict = {}
@@ -850,7 +850,7 @@ Generate comprehensive unit tests for each file in the code_files section above.
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error: {e}")
                 logger.error(f"Failed content preview: {repr(json_content[:200])}")
-                if "expecting value: line 1 column 1 (char 0)" in str(e):
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
                     logger.error("The AI returned empty or non-JSON content")
                     logger.debug(f"Full original response: {repr(content)}")
                 return self._try_recover_partial_results(json_content, e)
@@ -902,7 +902,7 @@ Generate comprehensive unit tests for each file in the code_files section above.
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error: {e}")
             logger.error(f"Failed content preview: {repr(json_content[:200])}")
-            if "expecting value: line 1 column 1 (char 0)" in str(e):
+            if "Expecting value: line 1 column 1 (char 0)" in str(e):
                 logger.error("The AI returned empty or non-JSON content")
                 # Try to provide more context about what went wrong
                 if not content.strip():
