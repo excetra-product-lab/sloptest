@@ -147,7 +147,7 @@ class Config:
         'prompt_engineering': {
             'use_2025_guidelines': True,  # Use improved prompts following Anthropic's 2025 best practices
             'encourage_step_by_step': True,  # Include step-by-step reasoning prompts
-            'use_positive_negative_examples': True,  # Include ✓/✗ examples in prompts
+            'use_positive_negative_examples': True,  # Include positive/negative examples in prompts
             'minimize_xml_structure': True,  # Reduce excessive XML tags in prompts
             'decisive_recommendations': True,  # Encourage single, strong recommendations
             'preserve_uncertainty': False,  # Whether to include hedging language (usually False for technical tasks)
@@ -325,7 +325,7 @@ security:
 prompt_engineering:
   use_2025_guidelines: true         # Use latest Anthropic prompt best practices
   encourage_step_by_step: true      # Include step-by-step reasoning prompts
-  use_positive_negative_examples: true # Include ✓/✗ examples in prompts
+  use_positive_negative_examples: true # Include positive/negative examples in prompts
   minimize_xml_structure: true      # Reduce excessive XML tags in prompts
   decisive_recommendations: true    # Encourage single, strong recommendations
   preserve_uncertainty: false       # Include hedging language (usually false)
@@ -354,7 +354,7 @@ prompt_engineering:
 # =============================================================================
 """
         
-        with open(filepath, 'w') as f:
+        with open(filepath, 'w', encoding='utf-8') as f:
             f.write(config_content)
         
         logger.info(f"Comprehensive configuration created at {filepath}")
