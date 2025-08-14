@@ -325,84 +325,19 @@ class LLMClient(ABC):
             "plan": "Tests appear to be working as expected"
         })
 
-
-class BedrockClient(LLMClient):
-    """Client for interacting with AWS Bedrock using langchain-aws ChatBedrock with STS assume-role."""
-
-    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", cost_manager=None, feedback=None):
-        if boto3 is None:
-            raise LLMClientError(
-                "boto3 is not installed",
-                suggestion="Install with: pip install boto3"
-            )
-        if ChatBedrock is None:
-            raise LLMClientError(
-                "langchain-aws is not installed",
-                suggestion="Install with: pip install langchain-aws"
-            )
-
-        self.region = region
-        self.cost_manager = cost_manager
-        self.inference_profile = inference_profile
-        self.feedback = feedback
-
-        # Assume role to obtain temporary credentials
-        try:
-            base_session = boto3.Session(region_name=region)
-            sts = base_session.client("sts", region_name=region)
-            assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName="bedrock")
-            creds = assumed["Credentials"]
-        except Exception as e:
-            raise AuthenticationError(
-                f"Failed to assume role for Bedrock: {e}",
-                suggestion="Verify RoleArn and trust policy, and that your caller has sts:AssumeRole permission."
-            )
-
-        # Create bedrock-runtime client with 5-minute read timeout using the assumed credentials
-        try:
-            import botocore.config as botocore_config
-            config = botocore_config.Config(read_timeout=300, retries={"max_attempts": 3, "mode": "standard"})
-            session = boto3.Session(
-                aws_access_key_id=creds["AccessKeyId"],
-                aws_secret_access_key=creds["SecretAccessKey"],
-                aws_session_token=creds["SessionToken"],
-                region_name=region,
-            )
-            bedrock_runtime = session.client("bedrock-runtime", config=config)
-        except Exception as e:
-            raise AuthenticationError(
-                f"Failed to create Bedrock runtime client: {e}",
-                suggestion="Check region and permissions for Bedrock runtime."
-            )
-
-        # Initialize ChatBedrock using the inference profile (as model_id) and provider anthropic
-        try:
-            # ChatBedrock uses 'inference_profile' and can receive a runtime_client
-            # Pass the inference profile as model id
-            self.chat = ChatBedrock(
-                model_id=inference_profile,
-                region_name=region,
-                provider="anthropic",
-                config=config,
-                client=bedrock_runtime,
-            )
-        except Exception as e:
-            raise LLMClientError(
-                f"Failed to initialize ChatBedrock: {e}",
-                suggestion="Ensure the inference profile exists and the provider is correct."
-            )
-
-    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str,
-                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
-        """Generate unit tests using Bedrock Converse/Invoke API, assuming Claude on Bedrock."""
-        # Extract codebase information for validation
+    def _extract_codebase_info(self, source_files: List[str], project_root: str) -> Dict:
+        """Extract codebase information for validation."""
         codebase_info = {}
         if source_files and project_root:
             codebase_info = extract_codebase_imports(source_files, project_root)
+        return codebase_info
 
-        validation_context = ""
-        if codebase_info:
-            validation_context = f"""
+    def _build_validation_context(self, codebase_info: Dict) -> str:
+        """Build validation context string from codebase info."""
+        if not codebase_info:
+            return ""
+        
+        return f"""
 
 AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
 {json.dumps(codebase_info.get('imports', {}), indent=2)}
@@ -410,7 +345,11 @@ AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
 CLASS_SIGNATURES (Required fields for dataclasses):
 {json.dumps(codebase_info.get('classes', {}), indent=2)}"""
 
-        user_content = f"""<directory_structure>
+    def _build_user_content(self, xml_content: str, directory_structure: str, codebase_info: Dict) -> str:
+        """Build user content for LLM request."""
+        validation_context = self._build_validation_context(codebase_info)
+        
+        return f"""<directory_structure>
 {directory_structure}
 </directory_structure>
 
@@ -420,567 +359,45 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 
 Generate comprehensive unit tests for each file in the code_files section above."""
 
-        # Calculate optimal parameters for Bedrock
-        file_count = len(re.findall(r'<file\s+filename=', xml_content))
-        
-        # Token allocation for Bedrock - same logic as Claude for consistency
-        if file_count == 1:
-            tokens_per_file = 6000  # Single files get detailed tests
-        elif file_count <= 3:
-            tokens_per_file = 5000  # Small batches get good detail
-        elif file_count <= 6:
-            tokens_per_file = 4000  # Medium batches get moderate detail
-        else:
-            tokens_per_file = 3000  # Large batches get focused tests
-        
-        estimated_output_size = file_count * tokens_per_file
-        max_tokens = min(32000, max(8000, estimated_output_size))
-
-        logger.info(f"Using Bedrock with max_tokens: {max_tokens:,} for {file_count} files ({tokens_per_file:,} tokens per file, estimated total: {estimated_output_size:,})")
-
-        # Log verbose prompt information if feedback is available
-        if self.feedback:
-            content_size = len(system_prompt + user_content + directory_structure)
+    def _log_verbose_prompt(self, model_name: str, system_prompt: str, user_content: str, file_count: int):
+        """Log verbose prompt information if feedback is available."""
+        if hasattr(self, 'feedback') and self.feedback:
+            content_size = len(system_prompt + user_content)
             self.feedback.verbose_prompt_display(
-                model_name=f"AWS Bedrock ({self.inference_profile})",
+                model_name=model_name,
                 system_prompt=system_prompt,
                 user_content=user_content,
                 content_size=content_size,
                 file_count=file_count
             )
 
-        try:
-            # Use langchain ChatBedrock with a system + user message structure and token limits
-            from langchain_core.messages import SystemMessage, HumanMessage
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=user_content),
-            ]
-            
-            # Set generation parameters including max_tokens
-            generation_kwargs = {
-                "max_tokens": max_tokens,
-                "temperature": 0.3,
-            }
-            
-            # Invoke with generation parameters
-            result = self.chat.invoke(messages, **generation_kwargs)
-            content = getattr(result, "content", "") or ""
-            # Normalize possible structured content into text
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict) and "text" in part:
-                        text_parts.append(part["text"])
-                    else:
-                        try:
-                            # Support objects with attribute access
-                            maybe_text = getattr(part, "text", None)
-                            if maybe_text:
-                                text_parts.append(maybe_text)
-                        except Exception:
-                            continue
-                content = "\n".join(text_parts)
-
-            # Check if we have content to parse
-            if not content or not content.strip():
-                logger.error("Empty response from Bedrock API")
-                raise LLMClientError(
-                    "Empty response from Bedrock API",
-                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
-                )
-            
-            # Extract JSON content with truncation handling
-            json_content = self._extract_json_content(content)
-            
-            try:
-                tests_dict = json.loads(json_content)
-                logger.info(f"Successfully parsed tests for {len(tests_dict)} files from Bedrock")
-                
-                # Check if we got tests for all expected files
-                if len(tests_dict) < file_count:
-                    logger.warning(f"Only received tests for {len(tests_dict)}/{file_count} files from Bedrock")
-                    logger.error("Response may have been truncated due to token limits.")
-                    logger.error(f"Try reducing batch size (current: {file_count} files) or simplify the source code.")
-                    
-                    if file_count > 1:
-                        logger.error(f"SUGGESTION: Try running with --batch-size {max(1, file_count // 2)} to reduce context size.")
-                        
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parse error from Bedrock: {e}")
-                logger.error(f"Failed content preview: {repr(json_content[:200])}")
-                if "Expecting value: line 1 column 1 (char 0)" in str(e):
-                    logger.error("Bedrock returned empty or non-JSON content")
-                    logger.debug(f"Full response: {repr(content)}")
-                
-                # Try to recover partial results using the same logic as Claude
-                tests_dict = self._try_recover_partial_results(json_content, e)
-
-            if codebase_info and tests_dict:
-                available_imports = codebase_info.get('imports', {})
-                validated_tests = {}
-                for filepath, test_content in tests_dict.items():
-                    is_valid, errors = validate_generated_test(test_content, filepath, available_imports, None)
-                    if is_valid:
-                        validated_tests[filepath] = test_content
-                    else:
-                        logger.warning(f"Generated test for {filepath} has validation errors: {errors}")
-                        fixed_content = self._attempt_basic_fixes(test_content, errors)
-                        if fixed_content:
-                            is_valid_fixed, _ = validate_generated_test(fixed_content, filepath, available_imports, None)
-                            if is_valid_fixed:
-                                validated_tests[filepath] = fixed_content
-                            else:
-                                logger.error(f"Could not auto-fix test for {filepath}")
-                        else:
-                            logger.error(f"Skipping invalid test for {filepath}")
-                return validated_tests
-
+    def _validate_and_fix_tests(self, tests_dict: Dict[str, str], codebase_info: Dict) -> Dict[str, str]:
+        """Validate generated tests and attempt to fix basic issues."""
+        if not codebase_info or not tests_dict:
             return tests_dict
-        except (BotoCoreError, NoCredentialsError) as e:
-            raise AuthenticationError(
-                f"AWS Bedrock authentication failed: {e}",
-                suggestion="Ensure AWS credentials are configured (env, config/credentials files, or SSO)."
-            )
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error from Bedrock: {e}")
-            logger.error(f"Failed content preview: {repr(content[:200] if 'content' in locals() else 'No content')}")
-            if "Expecting value: line 1 column 1 (char 0)" in str(e):
-                logger.error("Bedrock returned empty or non-JSON content")
-                if 'content' in locals():
-                    logger.debug(f"Full response: {repr(content)}")
-            return {}
-        except Exception as e:
-            raise LLMClientError(
-                f"Bedrock request failed: {e}",
-                suggestion="Verify model ID, region, and permissions for Bedrock use."
-            )
-
-    def _attempt_basic_fixes(self, content: str, errors: List[str]) -> str:
-        try:
-            if "mock.get.return_value = Mock" in content:
-                content = content.replace("mock.get.return_value = Mock", "mock.get.return_value = []")
-            if "mock_config.get(" in content and "return_value" not in content:
-                import_section = content.split("def test_")[0] if "def test_" in content else content[:500]
-                if "mock_config = Mock()" in import_section and "mock_config.get.return_value" not in import_section:
-                    content = content.replace(
-                        "mock_config = Mock()",
-                        "mock_config = Mock()\nmock_config.get.return_value = []"
-                    )
-            if "ANY" in content and "from unittest.mock import" in content and "ANY" not in content.split("from unittest.mock import")[1].split("\n")[0]:
-                content = content.replace(
-                    "from unittest.mock import",
-                    "from unittest.mock import ANY,"
-                )
-            compile(content, "test_fix_validation", 'exec', dont_inherit=True, optimize=0)
-            return content
-        except:
-            return None
-
-
-class AzureOpenAIClient(LLMClient):
-    """Client for interacting with Azure OpenAI."""
-
-    def __init__(self, endpoint: str, api_key: str, deployment_name: str, cost_manager=None, feedback=None):
-        self.endpoint = endpoint
-        self.api_key = api_key
-        self.deployment_name = deployment_name
-        self.api_version = "2024-10-21"
-        self.cost_manager = cost_manager
-        self.feedback = feedback
-
-    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
-                           source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
-        """Generate unit tests for the provided code."""
-        url = f"{self.endpoint}/openai/deployments/{self.deployment_name}/chat/completions?api-version={self.api_version}"
-
-        headers = {
-            "Content-Type": "application/json",
-            "api-key": self.api_key,
-        }
-
-        # Extract codebase information for validation
-        codebase_info = {}
-        if source_files and project_root:
-            codebase_info = extract_codebase_imports(source_files, project_root)
-
-        # Build validation context
-        validation_context = ""
-        if codebase_info:
-            validation_context = f"""
-
-AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
-{json.dumps(codebase_info.get('imports', {}), indent=2)}
-
-CLASS_SIGNATURES (Required fields for dataclasses):
-{json.dumps(codebase_info.get('classes', {}), indent=2)}"""
-
-        user_content = f"""<directory_structure>
-{directory_structure}
-</directory_structure>
-
-<code_files>
-{xml_content}
-</code_files>{validation_context}
-
-Generate comprehensive unit tests for each file in the code_files section above."""
-
-        # Log verbose prompt information if feedback is available
-        if self.feedback:
-            file_count = len(re.findall(r'<file\s+filename=', xml_content))
-            content_size = len(system_prompt + user_content + directory_structure)
-            self.feedback.verbose_prompt_display(
-                model_name=f"Azure OpenAI ({self.deployment_name})",
-                system_prompt=system_prompt,
-                user_content=user_content,
-                content_size=content_size,
-                file_count=file_count
-            )
-
-        payload = {
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            "temperature": 0.3,
-            "max_tokens": 16000,
-            "response_format": {"type": "json_object"}
-        }
-
-        try:
-            response = requests.post(url, headers=headers, json=payload)
-            response.raise_for_status()
-
-            result = response.json()
-            content = result['choices'][0]['message']['content']
-
-            # Parse JSON response
-            tests_dict = json.loads(content)
             
-            # Validate generated tests if we have codebase info
-            if codebase_info and tests_dict:
-                available_imports = codebase_info.get('imports', {})
-                validated_tests = {}
-                
-                for filepath, test_content in tests_dict.items():
-                    is_valid, errors = validate_generated_test(test_content, filepath, available_imports, None)
-                    if is_valid:
-                        validated_tests[filepath] = test_content
-                    else:
-                        logger.warning(f"Generated test for {filepath} has validation errors: {errors}")
-                        # Try to fix basic issues automatically
-                        fixed_content = self._attempt_basic_fixes(test_content, errors)
-                        if fixed_content:
-                            is_valid_fixed, _ = validate_generated_test(fixed_content, filepath, available_imports, None)
-                            if is_valid_fixed:
-                                validated_tests[filepath] = fixed_content
-                                logger.info(f"Auto-fixed test for {filepath}")
-                            else:
-                                logger.error(f"Could not auto-fix test for {filepath}")
-                        else:
-                            logger.error(f"Skipping invalid test for {filepath}")
-                
-                return validated_tests
-            
-            return tests_dict
-
-        except Exception as e:
-            logger.error(f"Failed to generate tests: {e}")
-            return {}
-
-    def _attempt_basic_fixes(self, content: str, errors: List[str]) -> str:
-        """Attempt to fix basic syntax and mock configuration issues."""
-        try:
-            # Fix common mock configuration issues that cause runtime errors
-            if "mock.get.return_value = Mock" in content:
-                content = content.replace("mock.get.return_value = Mock", "mock.get.return_value = []")
-            
-            if "mock_config.get(" in content and "return_value" not in content:
-                # Add proper mock configuration for config objects
-                import_section = content.split("def test_")[0] if "def test_" in content else content[:500]
-                if "mock_config = Mock()" in import_section and "mock_config.get.return_value" not in import_section:
-                    content = content.replace(
-                        "mock_config = Mock()",
-                        "mock_config = Mock()\\nmock_config.get.return_value = []"
-                    )
-            
-            # Add missing ANY import if it's being used but not imported
-            if "ANY" in content and "from unittest.mock import" in content and "ANY" not in content.split("from unittest.mock import")[1].split("\n")[0]:
-                content = content.replace(
-                    "from unittest.mock import",
-                    "from unittest.mock import ANY,"
-                )
-            
-            # Try parsing again to see if fixes worked
-            compile(content, "test_fix_validation", 'exec', dont_inherit=True, optimize=0)
-            return content
-        except:
-            return None
-
-
-class ClaudeAPIClient(LLMClient):
-    """Client for interacting with Claude API directly."""
-
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", cost_manager=None, feedback=None):
-        self.api_key = api_key
-        self.model = model
-        self.api_url = "https://api.anthropic.com/v1/messages"
-        self.cost_manager = cost_manager
-        self.feedback = feedback
-
-    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
-                           source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
-        """Generate unit tests for the provided code."""
-        headers = {
-            "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-        }
-
-        # Extract codebase information for validation
-        codebase_info = {}
-        if source_files and project_root:
-            codebase_info = extract_codebase_imports(source_files, project_root)
-
-        # Calculate content size
-        total_content = system_prompt + xml_content + directory_structure
-        content_size = len(total_content)
-        logger.info(f"Total content size: {content_size:,} characters")
-
-        # Count files to process
-        file_count = len(re.findall(r'<file\s+filename=', xml_content))
-        logger.info(f"Processing {file_count} files")
-
-        # Build validation context
-        validation_context = ""
-        if codebase_info:
-            validation_context = f"""
-
-AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
-{json.dumps(codebase_info.get('imports', {}), indent=2)}
-
-CLASS_SIGNATURES (Required fields for dataclasses):
-{json.dumps(codebase_info.get('classes', {}), indent=2)}"""
-
-        user_content = f"""<directory_structure>
-{directory_structure}
-</directory_structure>
-
-<code_files>
-{xml_content}
-</code_files>{validation_context}
-
-Generate comprehensive unit tests for each file in the code_files section above."""
-
-        # Check if content might be too large
-        # More logical token allocation: base tokens per file, scaled appropriately
-        base_tokens_per_file = 4000  # Reasonable comprehensive tests per file
+        available_imports = codebase_info.get('imports', {})
+        validated_tests = {}
         
-        # Calculate target output tokens based on file count
-        if file_count == 1:
-            # Single files can get more detailed tests
-            tokens_per_file = 6000
-        elif file_count <= 3:
-            # Small batches get good detail
-            tokens_per_file = 5000
-        elif file_count <= 6:
-            # Medium batches get moderate detail
-            tokens_per_file = 4000
-        else:
-            # Large batches get focused tests
-            tokens_per_file = 3000
-        
-        # Calculate total tokens needed, respecting model limits
-        estimated_output_size = file_count * tokens_per_file
-        max_tokens = min(32000, max(8000, estimated_output_size))  # Minimum 8k for any request
-
-        logger.info(f"Setting max_tokens to {max_tokens:,} for {file_count} files ({tokens_per_file:,} tokens per file, estimated total: {estimated_output_size:,})")
-
-        payload = {
-            "model": self.model,
-            "max_tokens": max_tokens,
-            "temperature": 0.3,
-            "system": system_prompt,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": user_content
-                }
-            ]
-        }
-
-        # Log verbose prompt information if feedback is available
-        if self.feedback:
-            self.feedback.verbose_prompt_display(
-                model_name=self.model,
-                system_prompt=system_prompt,
-                user_content=user_content,
-                content_size=content_size,
-                file_count=file_count
-            )
-        
-        logger.info(f"Sending request to Claude API using model: {self.model}")
-        logger.debug(f"Request payload size: {len(json.dumps(payload)):,} characters")
-
-        try:
-            response = requests.post(self.api_url, headers=headers, json=payload, timeout=120)
-            response.raise_for_status()
-
-            result = response.json()
-
-            # Check if response was truncated
-            stop_reason = result.get('stop_reason', 'unknown')
-            if stop_reason == 'max_tokens':
-                logger.warning(f"⚠️  Response truncated at {max_tokens:,} tokens - this will likely cause JSON parsing errors")
-
-            # Log token usage
-            if 'usage' in result:
-                input_tokens = result['usage'].get('input_tokens', 'N/A')
-                output_tokens = result['usage'].get('output_tokens', 'N/A')
-                logger.info(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
-                
-                # Log to cost manager if available
-                if self.cost_manager and input_tokens != 'N/A' and output_tokens != 'N/A':
-                    self.cost_manager.log_token_usage(self.model, input_tokens, output_tokens)
-
-                # Warn if we're close to token limit
-                if output_tokens != 'N/A' and output_tokens >= max_tokens - 100:
-                    logger.warning(f"Output tokens ({output_tokens}) near limit ({max_tokens})")
-
-            content = result['content'][0]['text']
-            logger.debug(f"Response content length: {len(content):,} characters")
-
-            # Try to extract JSON from the response
-            json_content = self._extract_json_content(content)
-            
-            # Check if we have any content to parse
-            if not json_content or not json_content.strip():
-                logger.error("Empty response from Claude API")
-                logger.debug(f"Original response content: {repr(content[:500])}")
-                raise LLMClientError(
-                    "Empty response from Claude API",
-                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
-                )
-
-            # Parse JSON response
-            try:
-                tests_dict = json.loads(json_content)
-                logger.info(f"Successfully parsed tests for {len(tests_dict)} files")
-
-                # Validate we got tests for all files
-                if len(tests_dict) < file_count:
-                    logger.warning(f"Only received tests for {len(tests_dict)}/{file_count} files")
-                    if stop_reason == 'max_tokens':
-                        logger.error("Response was truncated due to token limit.")
-                        logger.error(f"Try reducing batch size (current: {file_count} files) or simplify the source code.")
-                        
-                        # If this is a batch, suggest specific recovery
-                        if file_count > 1:
-                            logger.error(f"SUGGESTION: Try running with --batch-size {max(1, file_count // 2)} to reduce context size.")
-
-                for filepath in tests_dict.keys():
-                    test_size = len(tests_dict[filepath])
-                    logger.debug(f"  - Generated tests for: {filepath} ({test_size:,} chars)")
-
-                # Validate generated tests if we have codebase info
-                if codebase_info and tests_dict:
-                    available_imports = codebase_info.get('imports', {})
-                    validated_tests = {}
-                    
-                    for filepath, test_content in tests_dict.items():
-                        is_valid, errors = validate_generated_test(test_content, filepath, available_imports, None)
-                        if is_valid:
-                            validated_tests[filepath] = test_content
-                        else:
-                            logger.warning(f"Generated test for {filepath} has validation errors: {errors}")
-                            # Try to fix basic issues automatically
-                            fixed_content = self._attempt_basic_fixes(test_content, errors)
-                            if fixed_content:
-                                is_valid_fixed, _ = validate_generated_test(fixed_content, filepath, available_imports, None)
-                                if is_valid_fixed:
-                                    validated_tests[filepath] = fixed_content
-                                    logger.info(f"Auto-fixed test for {filepath}")
-                                else:
-                                    logger.error(f"Could not auto-fix test for {filepath}")
-                            else:
-                                logger.error(f"Skipping invalid test for {filepath}")
-                    
-                    return validated_tests
-
-                return tests_dict
-
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON parse error: {e}")
-                logger.error(f"Failed content preview: {repr(json_content[:200])}")
-                if "Expecting value: line 1 column 1 (char 0)" in str(e):
-                    logger.error("The AI returned empty or non-JSON content")
-                    logger.debug(f"Full original response: {repr(content)}")
-                return self._try_recover_partial_results(json_content, e)
-
-        except requests.exceptions.HTTPError as e:
-            status_code = e.response.status_code if e.response else None
-            
-            if status_code == 401:
-                raise AuthenticationError(
-                    "Invalid API key or authentication failed",
-                    suggestion="Check your Claude API key and ensure it's valid."
-                )
-            elif status_code == 429:
-                raise LLMClientError(
-                    "API rate limit exceeded",
-                    status_code=status_code,
-                    suggestion="Wait a moment and try again, or reduce the batch size."
-                )
-            elif status_code == 400:
-                error_details = e.response.text
-                try:
-                    error_json = json.loads(error_details)
-                    error_msg = error_json.get('error', {}).get('message', 'Bad request')
-                except:
-                    error_msg = error_details[:200] + "..." if len(error_details) > 200 else error_details
-                
-                raise LLMClientError(
-                    f"API request error: {error_msg}",
-                    status_code=status_code,
-                    suggestion="Check your request parameters and try again with fewer files."
-                )
+        for filepath, test_content in tests_dict.items():
+            is_valid, errors = validate_generated_test(test_content, filepath, available_imports, None)
+            if is_valid:
+                validated_tests[filepath] = test_content
             else:
-                raise LLMClientError(
-                    f"HTTP error {status_code}: {e}",
-                    status_code=status_code,
-                    suggestion="Check your network connection and try again."
-                )
-                
-        except requests.exceptions.Timeout:
-            raise LLMClientError(
-                "Request timed out after 120 seconds",
-                suggestion="Try again with fewer files or check your network connection."
-            )
-        except requests.exceptions.ConnectionError:
-            raise LLMClientError(
-                "Failed to connect to Claude API",
-                suggestion="Check your internet connection and try again."
-            )
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}")
-            logger.error(f"Failed content preview: {repr(json_content[:200])}")
-            if "Expecting value: line 1 column 1 (char 0)" in str(e):
-                logger.error("The AI returned empty or non-JSON content")
-                # Try to provide more context about what went wrong
-                if not content.strip():
-                    logger.error("Response was completely empty")
-                elif not json_content.strip():
-                    logger.error("No JSON content found after extraction")
-                    logger.debug(f"Original response: {repr(content[:500])}")
-            return self._try_recover_partial_results(json_content, e)
-        except Exception as e:
-            logger.error(f"Unexpected error: {type(e).__name__}: {e}")
-            import traceback
-            logger.debug(traceback.format_exc())
-            raise LLMClientError(
-                f"Unexpected error: {e}",
-                suggestion="This appears to be a bug. Please try again or report the issue."
-            )
+                logger.warning(f"Generated test for {filepath} has validation errors: {errors}")
+                # Try to fix basic issues automatically
+                fixed_content = self._attempt_basic_fixes(test_content, errors)
+                if fixed_content:
+                    is_valid_fixed, _ = validate_generated_test(fixed_content, filepath, available_imports, None)
+                    if is_valid_fixed:
+                        validated_tests[filepath] = fixed_content
+                        logger.info(f"Auto-fixed test for {filepath}")
+                    else:
+                        logger.error(f"Could not auto-fix test for {filepath}")
+                else:
+                    logger.error(f"Skipping invalid test for {filepath}")
+        
+        return validated_tests
 
     def _extract_json_content(self, content: str) -> str:
         """Extract JSON content from the response."""
@@ -1156,3 +573,453 @@ Generate comprehensive unit tests for each file in the code_files section above.
             return content
         except:
             return None
+
+
+class BedrockClient(LLMClient):
+    """Client for interacting with AWS Bedrock using langchain-aws ChatBedrock with STS assume-role."""
+
+    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", cost_manager=None, feedback=None):
+        if boto3 is None:
+            raise LLMClientError(
+                "boto3 is not installed",
+                suggestion="Install with: pip install boto3"
+            )
+        if ChatBedrock is None:
+            raise LLMClientError(
+                "langchain-aws is not installed",
+                suggestion="Install with: pip install langchain-aws"
+            )
+
+        self.region = region
+        self.cost_manager = cost_manager
+        self.inference_profile = inference_profile
+        self.feedback = feedback
+
+        # Assume role to obtain temporary credentials
+        try:
+            base_session = boto3.Session(region_name=region)
+            sts = base_session.client("sts", region_name=region)
+            assumed = sts.assume_role(RoleArn=role_arn, RoleSessionName="bedrock")
+            creds = assumed["Credentials"]
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to assume role for Bedrock: {e}",
+                suggestion="Verify RoleArn and trust policy, and that your caller has sts:AssumeRole permission."
+            )
+
+        # Create bedrock-runtime client with 5-minute read timeout using the assumed credentials
+        try:
+            import botocore.config as botocore_config
+            config = botocore_config.Config(read_timeout=300, retries={"max_attempts": 3, "mode": "standard"})
+            session = boto3.Session(
+                aws_access_key_id=creds["AccessKeyId"],
+                aws_secret_access_key=creds["SecretAccessKey"],
+                aws_session_token=creds["SessionToken"],
+                region_name=region,
+            )
+            bedrock_runtime = session.client("bedrock-runtime", config=config)
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to create Bedrock runtime client: {e}",
+                suggestion="Check region and permissions for Bedrock runtime."
+            )
+
+        # Initialize ChatBedrock using the inference profile (as model_id) and provider anthropic
+        try:
+            # ChatBedrock uses 'inference_profile' and can receive a runtime_client
+            # Pass the inference profile as model id
+            self.chat = ChatBedrock(
+                model_id=inference_profile,
+                region_name=region,
+                provider="anthropic",
+                config=config,
+                client=bedrock_runtime,
+            )
+        except Exception as e:
+            raise LLMClientError(
+                f"Failed to initialize ChatBedrock: {e}",
+                suggestion="Ensure the inference profile exists and the provider is correct."
+            )
+
+    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str,
+                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
+        """Generate unit tests using Bedrock Converse/Invoke API, assuming Claude on Bedrock."""
+        # Extract codebase information for validation
+        codebase_info = self._extract_codebase_info(source_files, project_root)
+        user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
+
+        # Calculate optimal parameters for Bedrock
+        file_count = len(re.findall(r'<file\s+filename=', xml_content))
+        
+        # Token allocation for Bedrock - same logic as Claude for consistency
+        if file_count == 1:
+            tokens_per_file = 6000  # Single files get detailed tests
+        elif file_count <= 3:
+            tokens_per_file = 5000  # Small batches get good detail
+        elif file_count <= 6:
+            tokens_per_file = 4000  # Medium batches get moderate detail
+        else:
+            tokens_per_file = 3000  # Large batches get focused tests
+        
+        estimated_output_size = file_count * tokens_per_file
+        max_tokens = min(32000, max(8000, estimated_output_size))
+
+        logger.info(f"Using Bedrock with max_tokens: {max_tokens:,} for {file_count} files ({tokens_per_file:,} tokens per file, estimated total: {estimated_output_size:,})")
+
+        # Log verbose prompt information if feedback is available
+        self._log_verbose_prompt(f"AWS Bedrock ({self.inference_profile})", system_prompt, user_content, file_count)
+
+        try:
+            # Use langchain ChatBedrock with a system + user message structure and token limits
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content),
+            ]
+            
+            # Set generation parameters including max_tokens
+            generation_kwargs = {
+                "max_tokens": max_tokens,
+                "temperature": 0.3,
+            }
+            
+            # Invoke with generation parameters
+            result = self.chat.invoke(messages, **generation_kwargs)
+            content = getattr(result, "content", "") or ""
+            # Normalize possible structured content into text
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and "text" in part:
+                        text_parts.append(part["text"])
+                    else:
+                        try:
+                            # Support objects with attribute access
+                            maybe_text = getattr(part, "text", None)
+                            if maybe_text:
+                                text_parts.append(maybe_text)
+                        except Exception:
+                            continue
+                content = "\n".join(text_parts)
+
+            # Check if we have content to parse
+            if not content or not content.strip():
+                logger.error("Empty response from Bedrock API")
+                raise LLMClientError(
+                    "Empty response from Bedrock API",
+                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
+                )
+            
+            # Extract JSON content with truncation handling
+            json_content = self._extract_json_content(content)
+            
+            try:
+                tests_dict = json.loads(json_content)
+                logger.info(f"Successfully parsed tests for {len(tests_dict)} files from Bedrock")
+                
+                # Check if we got tests for all expected files
+                if len(tests_dict) < file_count:
+                    logger.warning(f"Only received tests for {len(tests_dict)}/{file_count} files from Bedrock")
+                    logger.error("Response may have been truncated due to token limits.")
+                    logger.error(f"Try reducing batch size (current: {file_count} files) or simplify the source code.")
+                    
+                    if file_count > 1:
+                        logger.error(f"SUGGESTION: Try running with --batch-size {max(1, file_count // 2)} to reduce context size.")
+                        
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error from Bedrock: {e}")
+                logger.error(f"Failed content preview: {repr(json_content[:200])}")
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                    logger.error("Bedrock returned empty or non-JSON content")
+                    logger.debug(f"Full response: {repr(content)}")
+                
+                # Try to recover partial results using the same logic as Claude
+                tests_dict = self._try_recover_partial_results(json_content, e)
+
+            return self._validate_and_fix_tests(tests_dict, codebase_info)
+        except (BotoCoreError, NoCredentialsError) as e:
+            raise AuthenticationError(
+                f"AWS Bedrock authentication failed: {e}",
+                suggestion="Ensure AWS credentials are configured (env, config/credentials files, or SSO)."
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error from Bedrock: {e}")
+            logger.error(f"Failed content preview: {repr(content[:200] if 'content' in locals() else 'No content')}")
+            if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                logger.error("Bedrock returned empty or non-JSON content")
+                if 'content' in locals():
+                    logger.debug(f"Full response: {repr(content)}")
+            return {}
+        except Exception as e:
+            raise LLMClientError(
+                f"Bedrock request failed: {e}",
+                suggestion="Verify model ID, region, and permissions for Bedrock use."
+            )
+
+
+class AzureOpenAIClient(LLMClient):
+    """Client for interacting with Azure OpenAI."""
+
+    def __init__(self, endpoint: str, api_key: str, deployment_name: str, cost_manager=None, feedback=None):
+        self.endpoint = endpoint
+        self.api_key = api_key
+        self.deployment_name = deployment_name
+        self.api_version = "2024-10-21"
+        self.cost_manager = cost_manager
+        self.feedback = feedback
+
+    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
+                           source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
+        """Generate unit tests for the provided code."""
+        url = f"{self.endpoint}/openai/deployments/{self.deployment_name}/chat/completions?api-version={self.api_version}"
+
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": self.api_key,
+        }
+
+        # Extract codebase information for validation
+        codebase_info = self._extract_codebase_info(source_files, project_root)
+        user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
+
+        # Log verbose prompt information if feedback is available
+        file_count = len(re.findall(r'<file\s+filename=', xml_content))
+        self._log_verbose_prompt(f"Azure OpenAI ({self.deployment_name})", system_prompt, user_content, file_count)
+
+        payload = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 16000,
+            "response_format": {"type": "json_object"}
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+
+            # Parse JSON response
+            tests_dict = json.loads(content)
+            
+            # Validate generated tests if we have codebase info
+            return self._validate_and_fix_tests(tests_dict, codebase_info)
+
+        except Exception as e:
+            logger.error(f"Failed to generate tests: {e}")
+            return {}
+
+class ClaudeAPIClient(LLMClient):
+    """Client for interacting with Claude API directly."""
+
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", cost_manager=None, feedback=None):
+        self.api_key = api_key
+        self.model = model
+        self.api_url = "https://api.anthropic.com/v1/messages"
+        self.cost_manager = cost_manager
+        self.feedback = feedback
+
+    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
+                           source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
+        """Generate unit tests for the provided code."""
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+
+        # Extract codebase information for validation
+        codebase_info = self._extract_codebase_info(source_files, project_root)
+        user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
+
+        # Calculate content size
+        total_content = system_prompt + user_content
+        content_size = len(total_content)
+        logger.info(f"Total content size: {content_size:,} characters")
+
+        # Count files to process
+        file_count = len(re.findall(r'<file\s+filename=', xml_content))
+        logger.info(f"Processing {file_count} files")
+
+        # Check if content might be too large
+        # More logical token allocation: base tokens per file, scaled appropriately
+        base_tokens_per_file = 4000  # Reasonable comprehensive tests per file
+        
+        # Calculate target output tokens based on file count
+        if file_count == 1:
+            # Single files can get more detailed tests
+            tokens_per_file = 6000
+        elif file_count <= 3:
+            # Small batches get good detail
+            tokens_per_file = 5000
+        elif file_count <= 6:
+            # Medium batches get moderate detail
+            tokens_per_file = 4000
+        else:
+            # Large batches get focused tests
+            tokens_per_file = 3000
+        
+        # Calculate total tokens needed, respecting model limits
+        estimated_output_size = file_count * tokens_per_file
+        max_tokens = min(32000, max(8000, estimated_output_size))  # Minimum 8k for any request
+
+        logger.info(f"Setting max_tokens to {max_tokens:,} for {file_count} files ({tokens_per_file:,} tokens per file, estimated total: {estimated_output_size:,})")
+
+        payload = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": 0.3,
+            "system": system_prompt,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": user_content
+                }
+            ]
+        }
+
+        # Log verbose prompt information if feedback is available
+        self._log_verbose_prompt(self.model, system_prompt, user_content, file_count)
+        
+        logger.info(f"Sending request to Claude API using model: {self.model}")
+        logger.debug(f"Request payload size: {len(json.dumps(payload)):,} characters")
+
+        try:
+            response = requests.post(self.api_url, headers=headers, json=payload, timeout=120)
+            response.raise_for_status()
+
+            result = response.json()
+
+            # Check if response was truncated
+            stop_reason = result.get('stop_reason', 'unknown')
+            if stop_reason == 'max_tokens':
+                logger.warning(f"⚠️  Response truncated at {max_tokens:,} tokens - this will likely cause JSON parsing errors")
+
+            # Log token usage
+            if 'usage' in result:
+                input_tokens = result['usage'].get('input_tokens', 'N/A')
+                output_tokens = result['usage'].get('output_tokens', 'N/A')
+                logger.info(f"Token usage - Input: {input_tokens}, Output: {output_tokens}")
+                
+                # Log to cost manager if available
+                if self.cost_manager and input_tokens != 'N/A' and output_tokens != 'N/A':
+                    self.cost_manager.log_token_usage(self.model, input_tokens, output_tokens)
+
+                # Warn if we're close to token limit
+                if output_tokens != 'N/A' and output_tokens >= max_tokens - 100:
+                    logger.warning(f"Output tokens ({output_tokens}) near limit ({max_tokens})")
+
+            content = result['content'][0]['text']
+            logger.debug(f"Response content length: {len(content):,} characters")
+
+            # Try to extract JSON from the response
+            json_content = self._extract_json_content(content)
+            
+            # Check if we have any content to parse
+            if not json_content or not json_content.strip():
+                logger.error("Empty response from Claude API")
+                logger.debug(f"Original response content: {repr(content[:500])}")
+                raise LLMClientError(
+                    "Empty response from Claude API",
+                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
+                )
+
+            # Parse JSON response
+            try:
+                tests_dict = json.loads(json_content)
+                logger.info(f"Successfully parsed tests for {len(tests_dict)} files")
+
+                # Validate we got tests for all files
+                if len(tests_dict) < file_count:
+                    logger.warning(f"Only received tests for {len(tests_dict)}/{file_count} files")
+                    if stop_reason == 'max_tokens':
+                        logger.error("Response was truncated due to token limit.")
+                        logger.error(f"Try reducing batch size (current: {file_count} files) or simplify the source code.")
+                        
+                        # If this is a batch, suggest specific recovery
+                        if file_count > 1:
+                            logger.error(f"SUGGESTION: Try running with --batch-size {max(1, file_count // 2)} to reduce context size.")
+
+                for filepath in tests_dict.keys():
+                    test_size = len(tests_dict[filepath])
+                    logger.debug(f"  - Generated tests for: {filepath} ({test_size:,} chars)")
+
+                # Validate generated tests if we have codebase info
+                return self._validate_and_fix_tests(tests_dict, codebase_info)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error: {e}")
+                logger.error(f"Failed content preview: {repr(json_content[:200])}")
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                    logger.error("The AI returned empty or non-JSON content")
+                    logger.debug(f"Full original response: {repr(content)}")
+                return self._try_recover_partial_results(json_content, e)
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response else None
+            
+            if status_code == 401:
+                raise AuthenticationError(
+                    "Invalid API key or authentication failed",
+                    suggestion="Check your Claude API key and ensure it's valid."
+                )
+            elif status_code == 429:
+                raise LLMClientError(
+                    "API rate limit exceeded",
+                    status_code=status_code,
+                    suggestion="Wait a moment and try again, or reduce the batch size."
+                )
+            elif status_code == 400:
+                error_details = e.response.text
+                try:
+                    error_json = json.loads(error_details)
+                    error_msg = error_json.get('error', {}).get('message', 'Bad request')
+                except:
+                    error_msg = error_details[:200] + "..." if len(error_details) > 200 else error_details
+                
+                raise LLMClientError(
+                    f"API request error: {error_msg}",
+                    status_code=status_code,
+                    suggestion="Check your request parameters and try again with fewer files."
+                )
+            else:
+                raise LLMClientError(
+                    f"HTTP error {status_code}: {e}",
+                    status_code=status_code,
+                    suggestion="Check your network connection and try again."
+                )
+                
+        except requests.exceptions.Timeout:
+            raise LLMClientError(
+                "Request timed out after 120 seconds",
+                suggestion="Try again with fewer files or check your network connection."
+            )
+        except requests.exceptions.ConnectionError:
+            raise LLMClientError(
+                "Failed to connect to Claude API",
+                suggestion="Check your internet connection and try again."
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error: {e}")
+            logger.error(f"Failed content preview: {repr(json_content[:200])}")
+            if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                logger.error("The AI returned empty or non-JSON content")
+                # Try to provide more context about what went wrong
+                if not content.strip():
+                    logger.error("Response was completely empty")
+                elif not json_content.strip():
+                    logger.error("No JSON content found after extraction")
+                    logger.debug(f"Original response: {repr(content[:500])}")
+            return self._try_recover_partial_results(json_content, e)
+        except Exception as e:
+            logger.error(f"Unexpected error: {type(e).__name__}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            raise LLMClientError(
+                f"Unexpected error: {e}",
+                suggestion="This appears to be a bug. Please try again or report the issue."
+            )
