@@ -420,9 +420,24 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 
 Generate comprehensive unit tests for each file in the code_files section above."""
 
+        # Calculate optimal parameters for Bedrock
+        file_count = len(re.findall(r'<file\s+filename=', xml_content))
+        
+        # Token estimation for Bedrock (similar to Claude)
+        estimated_output_size = file_count * 5000  # Realistic estimate per file
+        
+        # Bedrock token limits (Claude models typically support up to 200k context)
+        if file_count == 1:
+            max_tokens = min(32000, max(20000, estimated_output_size))
+        elif file_count <= 3:
+            max_tokens = min(32000, max(16000, estimated_output_size))
+        else:
+            max_tokens = min(32000, max(12000, estimated_output_size // 2))
+
+        logger.info(f"Using Bedrock with max_tokens: {max_tokens:,} for {file_count} files (estimated output: {estimated_output_size:,} tokens)")
+
         # Log verbose prompt information if feedback is available
         if self.feedback:
-            file_count = len(re.findall(r'<file\s+filename=', xml_content))
             content_size = len(system_prompt + user_content + directory_structure)
             self.feedback.verbose_prompt_display(
                 model_name=f"AWS Bedrock ({self.inference_profile})",
@@ -433,13 +448,21 @@ Generate comprehensive unit tests for each file in the code_files section above.
             )
 
         try:
-            # Use langchain ChatBedrock with a system + user message structure
+            # Use langchain ChatBedrock with a system + user message structure and token limits
             from langchain_core.messages import SystemMessage, HumanMessage
             messages = [
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_content),
             ]
-            result = self.chat.invoke(messages)
+            
+            # Set generation parameters including max_tokens
+            generation_kwargs = {
+                "max_tokens": max_tokens,
+                "temperature": 0.3,
+            }
+            
+            # Invoke with generation parameters
+            result = self.chat.invoke(messages, **generation_kwargs)
             content = getattr(result, "content", "") or ""
             # Normalize possible structured content into text
             if isinstance(content, list):
@@ -465,15 +488,31 @@ Generate comprehensive unit tests for each file in the code_files section above.
                     suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
                 )
             
+            # Extract JSON content with truncation handling
+            json_content = self._extract_json_content(content)
+            
             try:
-                tests_dict = json.loads(content)
+                tests_dict = json.loads(json_content)
+                logger.info(f"Successfully parsed tests for {len(tests_dict)} files from Bedrock")
+                
+                # Check if we got tests for all expected files
+                if len(tests_dict) < file_count:
+                    logger.warning(f"Only received tests for {len(tests_dict)}/{file_count} files from Bedrock")
+                    logger.error("Response may have been truncated due to token limits.")
+                    logger.error(f"Try reducing batch size (current: {file_count} files) or simplify the source code.")
+                    
+                    if file_count > 1:
+                        logger.error(f"SUGGESTION: Try running with --batch-size {max(1, file_count // 2)} to reduce context size.")
+                        
             except json.JSONDecodeError as e:
                 logger.error(f"JSON parse error from Bedrock: {e}")
-                logger.error(f"Failed content preview: {repr(content[:200])}")
+                logger.error(f"Failed content preview: {repr(json_content[:200])}")
                 if "Expecting value: line 1 column 1 (char 0)" in str(e):
-                    logger.error("The AI returned empty or non-JSON content")
+                    logger.error("Bedrock returned empty or non-JSON content")
                     logger.debug(f"Full response: {repr(content)}")
-                tests_dict = {}
+                
+                # Try to recover partial results using the same logic as Claude
+                tests_dict = self._try_recover_partial_results(json_content, e)
 
             if codebase_info and tests_dict:
                 available_imports = codebase_info.get('imports', {})
@@ -502,7 +541,12 @@ Generate comprehensive unit tests for each file in the code_files section above.
                 suggestion="Ensure AWS credentials are configured (env, config/credentials files, or SSO)."
             )
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parse error: {e}")
+            logger.error(f"JSON parse error from Bedrock: {e}")
+            logger.error(f"Failed content preview: {repr(content[:200] if 'content' in locals() else 'No content')}")
+            if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                logger.error("Bedrock returned empty or non-JSON content")
+                if 'content' in locals():
+                    logger.debug(f"Full response: {repr(content)}")
             return {}
         except Exception as e:
             raise LLMClientError(
