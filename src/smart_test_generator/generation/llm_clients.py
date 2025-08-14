@@ -423,18 +423,20 @@ Generate comprehensive unit tests for each file in the code_files section above.
         # Calculate optimal parameters for Bedrock
         file_count = len(re.findall(r'<file\s+filename=', xml_content))
         
-        # Token estimation for Bedrock (similar to Claude)
-        estimated_output_size = file_count * 5000  # Realistic estimate per file
-        
-        # Bedrock token limits (Claude models typically support up to 200k context)
+        # Token allocation for Bedrock - same logic as Claude for consistency
         if file_count == 1:
-            max_tokens = min(32000, max(20000, estimated_output_size))
+            tokens_per_file = 6000  # Single files get detailed tests
         elif file_count <= 3:
-            max_tokens = min(32000, max(16000, estimated_output_size))
+            tokens_per_file = 5000  # Small batches get good detail
+        elif file_count <= 6:
+            tokens_per_file = 4000  # Medium batches get moderate detail
         else:
-            max_tokens = min(32000, max(12000, estimated_output_size // 2))
+            tokens_per_file = 3000  # Large batches get focused tests
+        
+        estimated_output_size = file_count * tokens_per_file
+        max_tokens = min(32000, max(8000, estimated_output_size))
 
-        logger.info(f"Using Bedrock with max_tokens: {max_tokens:,} for {file_count} files (estimated output: {estimated_output_size:,} tokens)")
+        logger.info(f"Using Bedrock with max_tokens: {max_tokens:,} for {file_count} files ({tokens_per_file:,} tokens per file, estimated total: {estimated_output_size:,})")
 
         # Log verbose prompt information if feedback is available
         if self.feedback:
@@ -771,21 +773,28 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 Generate comprehensive unit tests for each file in the code_files section above."""
 
         # Check if content might be too large
-        # Increase estimates based on real-world data - tests are often larger than 3k tokens
-        estimated_output_size = file_count * 5000  # More realistic estimate per file
+        # More logical token allocation: base tokens per file, scaled appropriately
+        base_tokens_per_file = 4000  # Reasonable comprehensive tests per file
         
-        # Use more conservative token limits to avoid truncation
+        # Calculate target output tokens based on file count
         if file_count == 1:
-            # For single files, use a higher limit but leave buffer for completion
-            max_tokens = min(32000, max(20000, estimated_output_size))
+            # Single files can get more detailed tests
+            tokens_per_file = 6000
         elif file_count <= 3:
-            # For small batches, be generous
-            max_tokens = min(32000, max(16000, estimated_output_size))
+            # Small batches get good detail
+            tokens_per_file = 5000
+        elif file_count <= 6:
+            # Medium batches get moderate detail
+            tokens_per_file = 4000
         else:
-            # For larger batches, be more conservative
-            max_tokens = min(32000, max(12000, estimated_output_size // 2))
+            # Large batches get focused tests
+            tokens_per_file = 3000
+        
+        # Calculate total tokens needed, respecting model limits
+        estimated_output_size = file_count * tokens_per_file
+        max_tokens = min(32000, max(8000, estimated_output_size))  # Minimum 8k for any request
 
-        logger.info(f"Setting max_tokens to {max_tokens:,} based on {file_count} files (estimated output: {estimated_output_size:,} tokens)")
+        logger.info(f"Setting max_tokens to {max_tokens:,} for {file_count} files ({tokens_per_file:,} tokens per file, estimated total: {estimated_output_size:,})")
 
         payload = {
             "model": self.model,
