@@ -727,17 +727,21 @@ CLASS_SIGNATURES (Required fields for dataclasses):
 Generate comprehensive unit tests for each file in the code_files section above."""
 
         # Check if content might be too large
-        estimated_output_size = file_count * 3000  # Rough estimate of output size per file
+        # Increase estimates based on real-world data - tests are often larger than 3k tokens
+        estimated_output_size = file_count * 5000  # More realistic estimate per file
         
-        # Use more generous token limits to avoid truncation
+        # Use more conservative token limits to avoid truncation
         if file_count == 1:
-            # For single files, use a higher limit to ensure complete generation
-            max_tokens = min(32000, max(16384, estimated_output_size // 2))
+            # For single files, use a higher limit but leave buffer for completion
+            max_tokens = min(32000, max(20000, estimated_output_size))
+        elif file_count <= 3:
+            # For small batches, be generous
+            max_tokens = min(32000, max(16000, estimated_output_size))
         else:
-            # For multiple files, be more conservative
-            max_tokens = min(32000, max(8192, estimated_output_size // 4))
+            # For larger batches, be more conservative
+            max_tokens = min(32000, max(12000, estimated_output_size // 2))
 
-        logger.info(f"Setting max_tokens to {max_tokens:,} based on {file_count} files")
+        logger.info(f"Setting max_tokens to {max_tokens:,} based on {file_count} files (estimated output: {estimated_output_size:,} tokens)")
 
         payload = {
             "model": self.model,
@@ -774,7 +778,7 @@ Generate comprehensive unit tests for each file in the code_files section above.
             # Check if response was truncated
             stop_reason = result.get('stop_reason', 'unknown')
             if stop_reason == 'max_tokens':
-                logger.warning("Response was truncated due to max_tokens limit")
+                logger.warning(f"⚠️  Response truncated at {max_tokens:,} tokens - this will likely cause JSON parsing errors")
 
             # Log token usage
             if 'usage' in result:
@@ -814,7 +818,12 @@ Generate comprehensive unit tests for each file in the code_files section above.
                 if len(tests_dict) < file_count:
                     logger.warning(f"Only received tests for {len(tests_dict)}/{file_count} files")
                     if stop_reason == 'max_tokens':
-                        logger.error("Response was truncated. Consider processing fewer files at once.")
+                        logger.error("Response was truncated due to token limit.")
+                        logger.error(f"Try reducing batch size (current: {file_count} files) or simplify the source code.")
+                        
+                        # If this is a batch, suggest specific recovery
+                        if file_count > 1:
+                            logger.error(f"SUGGESTION: Try running with --batch-size {max(1, file_count // 2)} to reduce context size.")
 
                 for filepath in tests_dict.keys():
                     test_size = len(tests_dict[filepath])
@@ -964,7 +973,9 @@ Generate comprehensive unit tests for each file in the code_files section above.
 
             if last_valid_pos > 0:
                 json_content = json_content[:last_valid_pos]
-                logger.warning(f"Truncated JSON to last valid position at character {last_valid_pos}")
+                logger.warning(f"⚠️  JSON appears truncated - found complete JSON up to position {last_valid_pos}")
+            else:
+                logger.warning("⚠️  JSON appears severely truncated - no complete JSON object found")
 
         return json_content
 
@@ -972,13 +983,30 @@ Generate comprehensive unit tests for each file in the code_files section above.
         """Try to recover partial results from invalid JSON."""
         # Log where the error occurred
         error_line = json_content.count('\n', 0, error.pos) + 1 if hasattr(error, 'pos') else 0
-        logger.error(f"Error at line {error_line}, position {error.pos if hasattr(error, 'pos') else 'unknown'}")
+        logger.error(f"JSON parse error at line {error_line}, position {error.pos if hasattr(error, 'pos') else 'unknown'}")
+        
+        # Check if this looks like truncation
+        if json_content.rstrip().endswith('",') or json_content.rstrip().endswith('"'):
+            logger.warning("Response appears to be truncated (ends abruptly)")
+        elif json_content.count('{') > json_content.count('}'):
+            logger.warning("Response appears to be truncated (unmatched opening braces)")
 
         # Try to salvage partial results
-        logger.info("Attempting to parse partial JSON results...")
+        logger.info("Attempting to recover partial JSON results...")
         try:
             # Method 1: Try to fix truncated JSON by adding closing braces
             fixed_json = json_content.rstrip()
+            
+            # Handle common truncation patterns
+            if fixed_json.endswith('",'):
+                # Likely truncated in the middle of a string value
+                fixed_json = fixed_json[:-1]  # Remove trailing comma
+            elif fixed_json.endswith('"'):
+                # Truncated right after a string value
+                pass  # Keep as is
+            elif fixed_json.endswith(','):
+                # Truncated after a comma
+                fixed_json = fixed_json[:-1]  # Remove trailing comma
             
             # Count open braces and try to close them
             open_braces = fixed_json.count('{') - fixed_json.count('}')
@@ -988,7 +1016,8 @@ Generate comprehensive unit tests for each file in the code_files section above.
                 
                 try:
                     result = json.loads(fixed_json)
-                    logger.info(f"Successfully recovered JSON by adding {open_braces} closing braces")
+                    logger.warning(f"✓ Recovered truncated JSON by adding {open_braces} closing braces")
+                    logger.warning(f"✓ Recovered {len(result)} test files from truncated response")
                     return result
                 except json.JSONDecodeError:
                     pass
