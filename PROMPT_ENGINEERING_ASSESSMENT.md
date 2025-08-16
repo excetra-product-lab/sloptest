@@ -3,7 +3,7 @@
 
 ### Executive Summary
 
-Following analysis of Anthropic's latest prompt engineering guidelines (2025), I evaluated all prompts in the Smart Test Generator codebase and implemented significant improvements. The main system prompt was upgraded from a **6.5/10** to an estimated **8.5/10** score.
+Following analysis of Anthropic's latest prompt engineering guidelines (2025), I evaluated all prompts in the SlopTest codebase and implemented significant improvements. The main system prompt was upgraded from a **6.5/10** to an estimated **8.5/10** score.
 
 ## Key Issues Identified
 

@@ -179,7 +179,7 @@ class Config:
         """Create a comprehensive configuration file with all options and explanations."""
         
         # Generate comprehensive config with ALL options and explanations
-        config_content = """# Smart Test Generator Configuration
+        config_content = """# SlopTest Configuration
 # This file contains ALL available configuration options with detailed explanations.
 # Uncomment and modify the sections you want to customize.
 

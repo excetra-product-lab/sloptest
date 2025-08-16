@@ -363,7 +363,7 @@ class UserFeedback:
         if not self.quiet:
             # Create a sophisticated branded header
             title_text = Text()
-            title_text.append("Smart Test Generator", style="bold bright_blue")
+            title_text.append("SlopTest", style="bold bright_blue")
             if subtitle:
                 title_text.append(f" • {subtitle}", style="dim cyan")
             

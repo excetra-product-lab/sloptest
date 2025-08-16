@@ -2,7 +2,7 @@
 
 ## 🎯 Key Improvements
 
-The Smart Test Generator now has a **much cleaner and more readable terminal interface** with three distinct output modes:
+SlopTest now has a **much cleaner and more readable terminal interface** with three distinct output modes:
 
 ### ✨ What Was Fixed
 - **Eliminated duplicate logging** - No more timestamp spam cluttering the output
@@ -14,7 +14,7 @@ The Smart Test Generator now has a **much cleaner and more readable terminal int
 
 ### 1. **Normal Mode** (Default)
 ```bash
-smart-test-gen generate
+sloptest generate
 ```
 - Clean, professional output with Rich UI
 - Progress indicators and status tables
@@ -23,8 +23,8 @@ smart-test-gen generate
 
 ### 2. **Quiet Mode** (`-q` or `--quiet`)
 ```bash
-smart-test-gen generate -q
-smart-test-gen analyze --quiet
+sloptest generate -q
+sloptest analyze --quiet
 ```
 - **Minimal output** - only essential progress and results
 - No decorative elements or banners
@@ -33,8 +33,8 @@ smart-test-gen analyze --quiet
 
 ### 3. **Verbose Mode** (`-v` or `--verbose`) 
 ```bash
-smart-test-gen generate -v
-smart-test-gen coverage --verbose
+sloptest generate -v
+sloptest coverage --verbose
 ```
 - Full diagnostic information
 - Debug messages and detailed logging
@@ -46,22 +46,22 @@ smart-test-gen coverage --verbose
 ### Test Generation with Clean Output
 ```bash
 # Normal mode - professional and clean
-smart-test-gen generate --claude-model="claude-sonnet-4-20250514"
+sloptest generate --claude-model="claude-sonnet-4-20250514"
 
 # Quiet mode - minimal output
-smart-test-gen generate -q --batch-size=5
+sloptest generate -q --batch-size=5
 
 # Verbose mode - full details
-smart-test-gen generate -v --streaming
+sloptest generate -v --streaming
 ```
 
 ### Analysis Modes
 ```bash
 # Quick analysis (quiet)
-smart-test-gen analyze -q
+sloptest analyze -q
 
 # Detailed analysis (verbose)  
-smart-test-gen analyze -v --force
+sloptest analyze -v --force
 ```
 
 ## 📊 Before vs After
@@ -107,4 +107,4 @@ smart-test-gen analyze -v --force
 - **Better UX** - Professional appearance increases confidence
 - **Flexible** - Choose the right verbosity for your use case
 
-The enhanced UI makes the Smart Test Generator feel like a professional, enterprise-grade tool while maintaining all the powerful functionality you need for intelligent test generation. 
+The enhanced UI makes SlopTest feel like a professional, enterprise-grade tool while maintaining all the powerful functionality you need for intelligent test generation. 

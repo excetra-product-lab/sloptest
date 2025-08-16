@@ -1,4 +1,4 @@
-"""Entry point for the smart-test-generator package."""
+"""Entry point for the sloptest package."""
 
 import sys
 from smart_test_generator.cli import main
