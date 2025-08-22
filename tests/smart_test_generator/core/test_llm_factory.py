@@ -38,7 +38,7 @@ class TestLLMClientFactory:
         # Assert
         mock_validator.validate_api_key.assert_called_once_with(api_key, "Claude")
         mock_validator.validate_model_name.assert_called_once()
-        mock_claude_client.assert_called_once_with(api_key, model, self.mock_cost_manager)
+        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=False, thinking_budget=4096, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback)
         self.mock_feedback.info.assert_called_once_with(f"Using Claude API with model: {model}")
         assert result == mock_client_instance
         
@@ -63,7 +63,7 @@ class TestLLMClientFactory:
         
         # Assert
         mock_validator.validate_api_key.assert_called_once_with(env_key, "Claude")
-        mock_claude_client.assert_called_once_with(env_key, model, self.mock_cost_manager)
+        mock_claude_client.assert_called_once_with(env_key, model, extended_thinking=False, thinking_budget=4096, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback)
         assert result == mock_client_instance
         
     @patch('smart_test_generator.core.llm_factory.Validator')
@@ -89,7 +89,7 @@ class TestLLMClientFactory:
         
         # Assert
         mock_validator.validate_api_key.assert_called_once_with(api_key, "Azure OpenAI")
-        mock_azure_client.assert_called_once_with(endpoint, api_key, deployment, self.mock_cost_manager)
+        mock_azure_client.assert_called_once_with(endpoint, api_key, deployment, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback)
         self.mock_feedback.info.assert_called_once_with("Using Azure OpenAI")
         assert result == mock_client_instance
         
@@ -219,7 +219,7 @@ class TestLLMClientFactory:
         )
         
         # Assert
-        mock_claude_client.assert_called_once_with(api_key, custom_model, None)
+        mock_claude_client.assert_called_once_with(api_key, custom_model, extended_thinking=False, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback)
         self.mock_feedback.info.assert_called_once_with(f"Using Claude API with model: {custom_model}")
         
     @patch('smart_test_generator.core.llm_factory.Validator')
@@ -259,12 +259,101 @@ class TestLLMClientFactory:
         mock_validator.validate_api_key.return_value = api_key
         mock_client_instance = Mock()
         mock_claude_client.return_value = mock_client_instance
-        
+
         # Act
         LLMClientFactory.create_client(
             claude_api_key=api_key,
             feedback=self.mock_feedback
         )
-        
+
         # Assert
-        mock_claude_client.assert_called_once_with(api_key, "claude-sonnet-4-20250514", None)
+        mock_claude_client.assert_called_once_with(api_key, "claude-sonnet-4-20250514", extended_thinking=False, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback)
+
+    @patch('smart_test_generator.core.llm_factory.Validator')
+    @patch('smart_test_generator.core.llm_factory.ClaudeAPIClient')
+    def test_create_client_with_extended_thinking_enabled(self, mock_claude_client, mock_validator):
+        """Test creating Claude client with extended thinking enabled."""
+        # Arrange
+        api_key = "test-claude-key"
+        model = "claude-sonnet-4-20250514"
+        thinking_budget = 8192
+        mock_validator.validate_api_key.return_value = api_key
+        mock_client_instance = Mock()
+        mock_claude_client.return_value = mock_client_instance
+
+        # Act
+        result = LLMClientFactory.create_client(
+            claude_api_key=api_key,
+            claude_model=model,
+            claude_extended_thinking=True,
+            claude_thinking_budget=thinking_budget,
+            feedback=self.mock_feedback
+        )
+
+        # Assert
+        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=True, thinking_budget=thinking_budget, cost_manager=None, feedback=self.mock_feedback)
+        self.mock_feedback.info.assert_called_once_with(f"Using Claude API with model: {model} (extended thinking enabled, budget: {thinking_budget} tokens)")
+        assert result == mock_client_instance
+
+    @patch('smart_test_generator.core.llm_factory.Validator')
+    def test_create_client_extended_thinking_unsupported_model(self, mock_validator):
+        """Test that extended thinking raises error for unsupported models."""
+        # Arrange
+        api_key = "test-claude-key"
+        unsupported_model = "claude-3-5-haiku-20241022"
+        mock_validator.validate_api_key.return_value = api_key
+
+        # Act & Assert
+        with pytest.raises(ValidationError) as exc_info:
+            LLMClientFactory.create_client(
+                claude_api_key=api_key,
+                claude_model=unsupported_model,
+                claude_extended_thinking=True,
+                feedback=self.mock_feedback
+            )
+
+        assert f"Extended thinking is not supported for model: {unsupported_model}" in str(exc_info.value)
+
+    @patch('smart_test_generator.core.llm_factory.Validator')
+    def test_create_client_extended_thinking_invalid_budget(self, mock_validator):
+        """Test that invalid thinking budget raises error."""
+        # Arrange
+        api_key = "test-claude-key"
+        model = "claude-sonnet-4-20250514"
+        invalid_budget = 50000  # Too high
+        mock_validator.validate_api_key.return_value = api_key
+
+        # Act & Assert
+        with pytest.raises(ValidationError) as exc_info:
+            LLMClientFactory.create_client(
+                claude_api_key=api_key,
+                claude_model=model,
+                claude_extended_thinking=True,
+                claude_thinking_budget=invalid_budget,
+                feedback=self.mock_feedback
+            )
+
+        assert "Thinking budget must be between 1024 and 32000 tokens" in str(exc_info.value)
+
+    @patch('smart_test_generator.core.llm_factory.Validator')
+    @patch('smart_test_generator.core.llm_factory.ClaudeAPIClient')
+    def test_create_client_extended_thinking_default_budget(self, mock_claude_client, mock_validator):
+        """Test that default thinking budget is used when not specified."""
+        # Arrange
+        api_key = "test-claude-key"
+        model = "claude-sonnet-4-20250514"
+        mock_validator.validate_api_key.return_value = api_key
+        mock_client_instance = Mock()
+        mock_claude_client.return_value = mock_client_instance
+
+        # Act
+        result = LLMClientFactory.create_client(
+            claude_api_key=api_key,
+            claude_model=model,
+            claude_extended_thinking=True,
+            feedback=self.mock_feedback
+        )
+
+        # Assert
+        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=True, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback)
+        assert result == mock_client_instance
