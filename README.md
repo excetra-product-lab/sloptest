@@ -1,387 +1,232 @@
 # SlopTest
 
-<div align="center">
+AI-assisted pytest generation for Python. It analyzes your code and current coverage, then writes only the missing tests. Supports Claude API, Azure OpenAI, and AWS Bedrock.
 
-🤖 **AI-Powered Python Test Generation**
+Key properties
+- Coverage-driven: decides what to generate from real or AST-estimated coverage
+- Incremental: generates only untested functions/methods
+- Safe writers: append or AST-merge into tests/ with optional Black formatting
+- Optional post-run + LLM refinement loop to fix failing tests
 
-*Intelligently generates missing tests by analyzing existing coverage and test patterns*
-
-[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-</div>
-
-## ✨ Features
-
-- 🎯 **Intelligent Test Gap Detection** - Analyzes your codebase to identify exactly what needs testing
-- 🤖 **Multi-Provider AI Integration** - Supports Claude API, Azure OpenAI, and AWS Bedrock
-- 📊 **Coverage-Driven Generation** - Uses existing test coverage to generate only missing tests
-- 🔄 **Automatic Refinement** - Self-healing tests that fix themselves when they fail
-- 💰 **Cost Optimization** - Built-in cost tracking and optimization strategies
-- 🎨 **Rich Terminal UI** - Beautiful, clean interface with progress tracking
-- ⚡ **Batch Processing** - Efficient processing with configurable batch sizes
-- 🔧 **Flexible Configuration** - YAML-based configuration with CLI overrides
-
-## 🚀 Quick Start
-
-### Installation
-
+Install (with uv)
 ```bash
-# Clone the repository
-git clone https://github.com/excetra-product-lab/sloptest.git
-cd sloptest
+# create and activate a virtualenv (optional but recommended)
+uv venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# Install dependencies
-pip install -e .
+# install
+uv pip install -e .
 
-# Or install with development dependencies
-pip install -e ".[dev]"
+# development extras
+uv pip install -e .[dev]
 ```
 
-### Basic Usage
-
-```bash
-# Generate tests for your project
-sloptest generate
-
-# Use with Claude API
-sloptest generate --claude-api-key="your-key-here"
-
-# Use with Azure OpenAI
-sloptest generate --endpoint="https://your-endpoint.openai.azure.com/" \
-                       --api-key="your-key" \
-                       --deployment="your-deployment"
-
-# Use with AWS Bedrock
-sloptest generate --bedrock-role-arn="arn:aws:iam::account:role/role-name" \
-                       --bedrock-inference-profile="your-profile-id"
-```
-
-## 📖 Usage
-
-### Available Modes
-
-| Mode | Description |
-|------|-------------|
-| `generate` | Generate missing unit tests (default) |
-| `analyze` | Analyze codebase and show test coverage gaps |
-| `coverage` | Run coverage analysis and show detailed report |
-| `status` | Show current project status and configuration |
-| `init-config` | Initialize configuration file |
-| `cost` | Display cost usage summary |
-
-### Generation Options
-
-```bash
-# Basic generation
-sloptest generate
-
-# Quiet mode (minimal output)
-sloptest generate -q
-
-# Verbose mode (detailed logging)
-sloptest generate -v
-
-# Custom batch size
-sloptest generate --batch-size=5
-
-# Streaming mode (file-by-file processing)
-sloptest generate --streaming
-
-# Force regeneration of all tests
-sloptest generate --force
-
-# Dry run (show what would be done)
-sloptest generate --dry-run
-```
-
-### Coverage Analysis
-
-```bash
-# Analyze test coverage gaps
-sloptest analyze
-
-# Run coverage analysis
-sloptest coverage
-
-# Custom coverage configuration
-sloptest generate --runner-mode=pytest-path \
-                       --pytest-path="/path/to/pytest" \
-                       --pytest-arg="--tb=short"
-```
-
-### Auto-Run and Refinement
-
-```bash
-# Automatically run tests after generation
-sloptest generate --auto-run
-
-# Enable automatic test refinement when tests fail
-sloptest generate --auto-run --refine-enable
-
-# Configure refinement parameters
-sloptest generate --auto-run --refine-enable \
-                       --retries=3 \
-                       --max-total-minutes=10
-```
-
-### Cost Management
-
-```bash
-# Enable cost optimization
-sloptest generate --cost-optimize
-
-# Set maximum cost limit
-sloptest generate --max-cost=10.00
-
-# View cost usage summary
-sloptest cost --usage-days=30
-```
-
-## ⚙️ Configuration
-
-### Configuration File
-
-Create a `.testgen.yml` file in your project root:
-
-```yaml
-# AI Provider Configuration
-ai:
-  provider: "claude"  # claude, azure, bedrock
-  claude:
-    api_key: "${CLAUDE_API_KEY}"
-    model: "claude-sonnet-4-20250514"
-  azure:
-    endpoint: "${AZURE_OPENAI_ENDPOINT}"
-    api_key: "${AZURE_OPENAI_API_KEY}"
-    deployment: "gpt-4"
-  bedrock:
-    role_arn: "${AWS_BEDROCK_ROLE_ARN}"
-    inference_profile: "${AWS_BEDROCK_INFERENCE_PROFILE}"
-    region: "us-east-1"
-
-# Test Generation Settings
-test_generation:
-  batch_size: 10
-  streaming: false
-  auto_run: true
-  
-  # Coverage Configuration
-  coverage:
-    runner:
-      mode: "python-module"  # python-module, pytest-path, custom
-      python: "python"
-      cwd: "."
-    pytest_args: ["--tb=short"]
-    
-  # Refinement Settings
-  refine:
-    enable: true
-    retries: 2
-    max_total_minutes: 15
-    stop_on_no_change: true
-
-# Cost Management
-cost:
-  optimize: false
-  max_per_session: 50.00
-  
-# Output Settings
-output:
-  quiet: false
-  verbose: false
-  
-# Security Settings
-security:
-  block_dangerous_patterns: true
-  max_generated_file_size: 50000
-```
-
-### Environment Variables
-
+Quick start
 ```bash
 # Claude API
-export CLAUDE_API_KEY="your-claude-api-key"
+export CLAUDE_API_KEY=...
+sloptest generate
 
 # Azure OpenAI
-export AZURE_OPENAI_ENDPOINT="https://your-endpoint.openai.azure.com/"
-export AZURE_OPENAI_API_KEY="your-azure-api-key"
+sloptest generate \
+  --endpoint https://<resource>.openai.azure.com \
+  --api-key <key> \
+  --deployment <deployment>
 
-# AWS Bedrock (requires AWS CLI configuration)
-export AWS_BEDROCK_ROLE_ARN="arn:aws:iam::account:role/role-name"
-export AWS_BEDROCK_INFERENCE_PROFILE="your-profile-id"
+# AWS Bedrock (assume-role + inference profile)
+sloptest generate \
+  --bedrock-role-arn arn:aws:iam::<account>:role/<role> \
+  --bedrock-inference-profile <profile> \
+  --bedrock-region us-east-1
 ```
 
-## 🎯 Advanced Features
+How it works
 
-### Test Merge Strategies
+Overview
+```mermaid
+flowchart TD
+  A[sloptest CLI] --> B[Validate system & project]
+  B --> C[Load config + apply CLI overrides]
+  C --> D[Initialize App]
+  D --> E[Sync state with existing tests]
+  E --> F[Find Python files]
+  F --> G{Mode}
+  G -->|analyze| H[Analyze plans + show gaps]
+  G -->|coverage| I[Run coverage + report]
+  G -->|status| J[Show generation history]
+  G -->|generate| K[Generate tests]
 
+  subgraph Generation
+    K --> L[Coverage analysis]
+    L --> M{coverage path}
+    M -->|pytest| N[Parse .coverage -> per-file metrics]
+    M -->|AST fallback| O[Estimate coverage from AST + tests]
+    N --> P[Create plans]
+    O --> P
+    P --> Q{streaming?}
+    Q -->|yes| R[Per file: LLM -> write]
+    Q -->|no| S[Batch N: LLM -> write]
+    R --> T[Optional pytest]
+    S --> T
+    T --> U{failures?}
+    U -->|no| V[Report + update state]
+    U -->|yes| W[Refinement loop]
+    W --> T
+    V --> X[Done]
+  end
+```
+
+Coverage path
+```mermaid
+flowchart LR
+  A[CoverageService] --> B[CoverageAnalyzer]
+  B --> C{pytest available}
+  C -->|yes| D[build_pytest_command]
+  D --> E[run_pytest]
+  E --> F{.coverage exists}
+  F -->|yes| G[Parse with coverage.py]
+  F -->|no| H[Parse errors + guidance]
+  H --> I[Fallback to AST]
+  C -->|no| I[ASTCoverageAnalyzer]
+  I --> J[Executable lines + functions]
+  J --> K[Estimate covered lines/functions]
+```
+
+Planning and generation (per file)
+```mermaid
+flowchart LR
+  A[PythonCodebaseParser] --> B[CodeAnalyzer - testable elements]
+  A --> C[TestMapper - existing tests]
+  B --> D[TestGenerationPlan]
+  C --> D
+  D --> E[IncrementalLLMClient]
+  E --> F[Prompt - dir tree, TODO XML, imports and signatures]
+  F --> G[LLMClient - providers Claude Azure Bedrock]
+  G --> H[JSON mapping source_py to tests]
+  H --> I[TestFileWriter]
+  I --> J[Test files under tests folder]
+  J --> K[TestGenerationTracker]
+  J --> L[TestGenerationReporter]
+```
+
+Refinement loop (sequence)
+```mermaid
+sequenceDiagram
+  participant GenS as TestGenerationService
+  participant Py as Pytest Runner
+  participant FP as Failure Parser
+  participant PB as Payload Builder
+  participant LLM as LLMClient (refine)
+  participant RM as Refine Manager
+  participant W as Safe Apply (tests/ only)
+
+  GenS->>Py: run pytest
+  Py-->>GenS: exit_code, stdout/stderr, junit
+  alt failures
+    GenS->>FP: parse failures
+    FP-->>GenS: normalized failures
+    GenS->>PB: build payload (env, repo meta, tests, failures)
+    PB-->>GenS: payload + prompt
+    GenS->>RM: run_refinement_cycle(payload)
+    loop attempts <= max_retries
+      RM->>LLM: refine_tests(payload, prompt)
+      LLM-->>RM: updated_files[]
+      alt any updates
+        RM->>W: apply updates (guard: tests/)
+      end
+      RM->>Py: re-run pytest
+      Py-->>RM: exit_code
+      alt passed or no-change
+        RM-->>GenS: outcome
+      end
+    end
+  else no failures
+    GenS-->>GenS: skip refinement
+  end
+```
+
+CLI
+
+Modes
+- generate (default): create missing tests
+- analyze: show files/elements to generate
+- coverage: print coverage summary
+- status: recent generation log
+- init-config: write a sample .testgen.yml
+- cost: cost usage summary (if cost manager enabled)
+- debug-state | sync-state | reset-state: state management
+
+Common flags
+--verbose, -v; --quiet, -q; --force; --dry-run; --batch-size N; --streaming
+--runner-mode [python-module|pytest-path|custom], --pytest-path PATH, --pytest-arg ARG
+--auto-run, --refine-enable, --retries N, --max-total-minutes N
+--merge-strategy [append|ast-merge], --merge-formatter [none|black], --merge-dry-run
+
+Minimal configuration (.testgen.yml)
+```yaml
+test_generation:
+  coverage:
+    minimum_line_coverage: 80
+    runner:
+      mode: python-module   # or pytest-path
+      python: python
+      cwd: .
+    pytest_args: ["--tb=short"]
+  generation:
+    merge:
+      strategy: append      # or ast-merge
+      formatter: none       # or black
+    test_runner:
+      enable: false         # set true to auto-run pytest after generation
+    refine:
+      enable: false         # set true to enable bounded refinement loop
+exclude_dirs: [".venv", "venv", "node_modules", "site-packages", ".git"]
+```
+
+Provider credentials
 ```bash
-# Append new tests to existing files
-sloptest generate --merge-strategy=append
+# Claude
+export CLAUDE_API_KEY=...
 
-# Use AST-based intelligent merging
-sloptest generate --merge-strategy=ast-merge
+# Azure OpenAI
+export AZURE_OPENAI_ENDPOINT=...  # https://<resource>.openai.azure.com
+export AZURE_OPENAI_API_KEY=...
 
-# Format merged output with Black
-sloptest generate --merge-strategy=ast-merge --merge-formatter=black
-
-# Dry run merge (see changes without writing)
-sloptest generate --merge-dry-run
+# AWS Bedrock
+export AWS_BEDROCK_ROLE_ARN=arn:aws:iam::...:role/...
+export AWS_BEDROCK_INFERENCE_PROFILE=...
 ```
 
-### Custom Test Patterns
+Merging behavior
+- append: append new tests to existing test file (default)
+- ast-merge: parse both sides and structurally merge; optional Black formatting
+- dry-run: compute unified diff without writing
 
-The tool automatically detects:
-- 🔍 Functions and methods that need testing
-- 📦 Classes requiring comprehensive test coverage
-- 🚨 Error conditions and edge cases
-- 🔄 Async functions and decorators
-- 📊 Data models and dataclasses
+Coverage model
+- Preferred: run pytest with coverage.py, parse .coverage, map executed/missing lines and covered/uncovered functions
+- Fallback: ASTCoverageAnalyzer estimates coverage and untested functions when pytest/coverage are unavailable
 
-### Coverage Integration
+State and outputs
+- .testgen_state.json: tested elements, coverage history, generation log
+- .testgen_report.json: summary of a run
+- .artifacts/coverage and .artifacts/refine/<run_id>: runner outputs and refinement traces
 
-SlopTest integrates seamlessly with:
-- ✅ **pytest** with pytest-cov
-- ✅ **coverage.py**
-- ✅ **Custom test runners**
+Safety and limits
+- Generated test content is validated: syntax check, size limits, and blocks dangerous patterns (eval/exec/subprocess, write modes)
+- Refinement applies updates only under tests/
 
-## 📊 Output Modes
+Troubleshooting
+- No coverage file: ensure pytest and coverage are importable in the active venv; try --runner-mode=pytest-path --pytest-path "$(which pytest)"
+- Empty/partial LLM JSON: reduce --batch-size or use --streaming
+- Imports fail during tests: add src/ to PYTHONPATH via config test_generation.coverage.env.append_pythonpath: ['src']
 
-### Normal Mode (Default)
-- Clean, professional output with Rich UI
-- Progress indicators and status tables
-- Beautiful panels for configuration and results
-
-### Quiet Mode (`-q`)
-- Minimal output - only essential progress and results
-- Perfect for scripts or CI/CD pipelines
-- No decorative elements or banners
-
-### Verbose Mode (`-v`)
-- Full diagnostic information
-- Debug messages and detailed logging
-- Complete transparency for troubleshooting
-
-## 🔧 Troubleshooting
-
-### Common Issues
-
-**API Authentication Errors**
+Development (with uv)
 ```bash
-# Verify your API credentials
-sloptest status
-
-# Test with verbose logging
-sloptest generate -v
+uv pip install -e .[dev]
+uv run pytest
+uvx ruff check src tests
+uvx black src tests
 ```
 
-**Coverage Issues**
-```bash
-# Check pytest configuration
-sloptest coverage -v
-
-# Test custom runner setup
-sloptest generate --runner-mode=pytest-path --pytest-path="$(which pytest)"
-```
-
-**Generation Quality Issues**
-```bash
-# Enable refinement loop
-sloptest generate --auto-run --refine-enable
-
-# Use smaller batch sizes
-sloptest generate --batch-size=3
-
-# Try streaming mode
-sloptest generate --streaming
-```
-
-### Debug Commands
-
-```bash
-# Show current configuration
-sloptest status
-
-# Debug state management
-sloptest debug-state
-
-# Reset state if needed
-sloptest reset-state
-
-# Sync state
-sloptest sync-state
-```
-
-## 🏗️ Architecture
-
-```
-sloptest/
-├── src/smart_test_generator/
-│   ├── cli.py                    # Command-line interface
-│   ├── config.py                 # Configuration management
-│   ├── core/
-│   │   ├── application.py        # Main application orchestrator
-│   │   └── llm_factory.py        # LLM client factory
-│   ├── analysis/
-│   │   ├── code_analyzer.py      # Code analysis and parsing
-│   │   ├── coverage_analyzer.py  # Coverage analysis
-│   │   └── test_mapper.py        # Test-to-source mapping
-│   ├── generation/
-│   │   ├── llm_clients.py        # AI provider integrations
-│   │   └── test_generator.py     # Test generation logic
-│   ├── services/
-│   │   ├── analysis_service.py   # Analysis orchestration
-│   │   ├── coverage_service.py   # Coverage operations
-│   │   └── test_generation_service.py  # Generation orchestration
-│   └── utils/
-│       ├── cost_manager.py       # Cost tracking
-│       ├── user_feedback.py      # Rich UI components
-│       └── validation.py         # Input validation
-└── tests/                        # Comprehensive test suite
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Setup
-
-```bash
-# Install development dependencies
-pip install -e ".[dev]"
-
-# Run tests
-pytest
-
-# Run linting
-black src/ tests/
-ruff check src/ tests/
-
-# Type checking
-mypy src/
-```
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- Built with ❤️ for Python developers who want better test coverage
-- Powered by state-of-the-art AI models from Anthropic, OpenAI, and AWS
-- Inspired by the need for intelligent, automated testing solutions
-
----
-
-<div align="center">
-
-**SlopTest** - Making comprehensive test coverage effortless
-
-[Report Bug](https://github.com/excetra-product-lab/sloptest/issues) · [Request Feature](https://github.com/excetra-product-lab/sloptest/issues) · [Documentation](https://github.com/excetra-product-lab/sloptest/wiki)
-
-</div>
+License
+MIT
