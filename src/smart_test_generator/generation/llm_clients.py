@@ -238,13 +238,27 @@ Return a valid JSON object where:
 </example_structure>"""
 
 
-def get_system_prompt(config: 'Config' = None) -> str:
+def get_system_prompt(config: 'Config' = None, extended_thinking: bool = False) -> str:
     """Get the system prompt for test generation."""
     # Check if we should use 2025 guidelines (default: True)
     if config and not config.get('prompt_engineering.use_2025_guidelines', True):
         return get_legacy_system_prompt()
-    
-    return """You are an expert Python test generator. Create comprehensive, runnable pytest tests that follow best practices.
+
+    base_prompt = """You are an expert Python test generator. Create comprehensive, runnable pytest tests that follow best practices."""
+
+    if extended_thinking:
+        base_prompt += """
+
+EXTENDED THINKING MODE:
+You have additional thinking capacity to thoroughly analyze code before generating tests.
+Take full advantage of this by:
+- Deeply analyzing the code structure and dependencies
+- Considering complex interaction patterns and edge cases
+- Planning comprehensive test coverage that catches subtle bugs
+- Designing tests that validate both expected and unexpected behaviors
+- Thinking through potential failure modes and error conditions systematically"""
+
+    base_prompt += """
 
 APPROACH:
 Think step-by-step before writing tests:
@@ -295,6 +309,8 @@ Return only a valid JSON object:
 
 Use proper JSON escaping: \\n for newlines, \\" for quotes, \\\\ for backslashes."""
 
+    return base_prompt
+
 
 class LLMClient(ABC):
     """Abstract base class for LLM clients."""
@@ -307,23 +323,28 @@ class LLMClient(ABC):
     
     def refine_tests(self, request: Dict) -> str:
         """Refine existing tests based on failure information.
-        
+
         Args:
             request: Dictionary containing payload and prompt for refinement
-            
+
         Returns:
             JSON string with updated_files, rationale, and plan
         """
         # Default implementation - subclasses should override for specific behavior
         payload = request.get("payload", {})
         prompt = request.get("prompt", "")
-        
+
         # For now, return empty response - indicates no refinements
         return json.dumps({
             "updated_files": [],
             "rationale": "No refinements needed",
             "plan": "Tests appear to be working as expected"
         })
+
+    def _call_refine_api(self, system_prompt: str, user_content: str, model_name: str) -> str:
+        """Helper method to call LLM API for refinement."""
+        # This is a placeholder that concrete implementations should override
+        return self.refine_tests({"payload": {}, "prompt": ""})
 
     def _extract_codebase_info(self, source_files: List[str], project_root: str) -> Dict:
         """Extract codebase information for validation."""
@@ -756,6 +777,155 @@ class BedrockClient(LLMClient):
                 suggestion="Verify model ID, region, and permissions for Bedrock use."
             )
 
+    def refine_tests(self, request: Dict) -> str:
+        """Refine existing tests based on failure information using AWS Bedrock."""
+        payload = request.get("payload", {})
+        prompt = request.get("prompt", "")
+
+        if not prompt or not payload:
+            logger.warning("Empty refinement prompt or payload")
+            return json.dumps({
+                "updated_files": [],
+                "rationale": "No refinement data provided",
+                "plan": "Cannot proceed without proper refinement context"
+            })
+
+        # Create system prompt for refinement with extended thinking if enabled
+        if self.extended_thinking:
+            system_prompt = """You are a senior Python testing engineer specializing in fixing failing tests.
+
+EXTENDED THINKING MODE:
+You have additional thinking capacity to thoroughly analyze test failures and design comprehensive fixes.
+Take full advantage of this by:
+- Deeply analyzing failure patterns and root causes
+- Considering complex interaction effects and dependencies
+- Planning systematic fixes that address both symptoms and underlying issues
+- Designing comprehensive solutions that prevent similar failures
+- Thinking through potential side effects and edge cases in your fixes
+
+Analyze test failures and provide targeted fixes that maintain test quality and coverage."""
+        else:
+            system_prompt = "You are a senior Python testing engineer specializing in fixing failing tests. Analyze test failures and provide targeted fixes that maintain test quality and coverage."
+
+        # Prepare the user content with refinement context
+        user_content = f"""# Test Refinement Request
+
+{prompt}
+
+## Context
+- Run ID: {payload.get('run_id', 'unknown')}
+- Project: {payload.get('repo_meta', {}).get('branch', 'unknown branch')}
+- Environment: {payload.get('environment', {}).get('python', 'unknown')} on {payload.get('environment', {}).get('platform', 'unknown')}
+
+## Test Generation Summary
+- Tests written: {len(payload.get('tests_written', []))} files
+- Last command: {' '.join(payload.get('last_run_command', []))}
+- Total failures: {payload.get('failures_total', 0)}"""
+
+        # Calculate token allocation for refinement
+        failure_count = len(payload.get("failures", []))
+        if failure_count <= 2:
+            max_tokens = 8000  # Simple refinements
+        elif failure_count <= 5:
+            max_tokens = 12000  # Moderate complexity
+        else:
+            max_tokens = 16000  # Complex refinements
+
+        logger.info(f"Using Bedrock for refinement with max_tokens: {max_tokens:,}")
+
+        # Log verbose prompt information if feedback is available
+        self._log_verbose_prompt(f"AWS Bedrock ({self.inference_profile})", system_prompt, user_content, 1)
+
+        try:
+            # Use langchain ChatBedrock with a system + user message structure
+            from langchain_core.messages import SystemMessage, HumanMessage
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_content),
+            ]
+
+            # Set generation parameters including max_tokens
+            generation_kwargs = {
+                "max_tokens": max_tokens,
+                "temperature": 0.2,  # Lower temperature for more consistent refinements
+            }
+
+            # Invoke with generation parameters
+            result = self.chat.invoke(messages, **generation_kwargs)
+            content = getattr(result, "content", "") or ""
+
+            # Normalize possible structured content into text
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and "text" in part:
+                        text_parts.append(part["text"])
+                    else:
+                        try:
+                            # Support objects with attribute access
+                            maybe_text = getattr(part, "text", None)
+                            if maybe_text:
+                                text_parts.append(maybe_text)
+                        except Exception:
+                            continue
+                content = "\n".join(text_parts)
+
+            # Check if we have content to parse
+            if not content or not content.strip():
+                logger.error("Empty response from Bedrock API for refinement")
+                return json.dumps({
+                    "updated_files": [],
+                    "rationale": "Empty response from AI model",
+                    "plan": "No refinement suggestions provided"
+                })
+
+            # Extract JSON content with truncation handling
+            json_content = self._extract_json_content(content)
+
+            try:
+                refinement_result = json.loads(json_content)
+                logger.info("Successfully parsed refinement response from Bedrock")
+
+                # Validate the response structure
+                if "updated_files" not in refinement_result:
+                    logger.warning("Refinement response missing 'updated_files' key")
+                    refinement_result["updated_files"] = []
+
+                return json.dumps(refinement_result)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error in refinement response from Bedrock: {e}")
+                logger.error(f"Failed content preview: {repr(json_content[:200])}")
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                    logger.error("Bedrock returned empty or non-JSON content for refinement")
+                    logger.debug(f"Full response: {repr(content)}")
+
+                # Try to recover partial results
+                return self._try_recover_partial_results(json_content, e)
+
+        except (BotoCoreError, NoCredentialsError) as e:
+            raise AuthenticationError(
+                f"AWS Bedrock authentication failed for refinement: {e}",
+                suggestion="Ensure AWS credentials are configured (env, config/credentials files, or SSO)."
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error in refinement response from Bedrock: {e}")
+            logger.error(f"Failed content preview: {repr(content[:200] if 'content' in locals() else 'No content')}")
+            if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                logger.error("Bedrock returned empty or non-JSON content for refinement")
+                if 'content' in locals():
+                    logger.debug(f"Full response: {repr(content)}")
+            return json.dumps({
+                "updated_files": [],
+                "rationale": "Failed to parse AI response",
+                "plan": "JSON parsing error occurred"
+            })
+        except Exception as e:
+            raise LLMClientError(
+                f"Bedrock refinement request failed: {e}",
+                suggestion="Verify model ID, region, and permissions for Bedrock use."
+            )
+
 
 class AzureOpenAIClient(LLMClient):
     """Client for interacting with Azure OpenAI."""
@@ -813,12 +983,156 @@ class AzureOpenAIClient(LLMClient):
             logger.error(f"Failed to generate tests: {e}")
             return {}
 
+    def refine_tests(self, request: Dict) -> str:
+        """Refine existing tests based on failure information using Azure OpenAI."""
+        payload = request.get("payload", {})
+        prompt = request.get("prompt", "")
+
+        if not prompt or not payload:
+            logger.warning("Empty refinement prompt or payload")
+            return json.dumps({
+                "updated_files": [],
+                "rationale": "No refinement data provided",
+                "plan": "Cannot proceed without proper refinement context"
+            })
+
+        url = f"{self.endpoint}/openai/deployments/{self.deployment_name}/chat/completions?api-version={self.api_version}"
+
+        headers = {
+            "Content-Type": "application/json",
+            "api-key": self.api_key,
+        }
+
+        # Create system prompt for refinement with extended thinking if enabled
+        if self.extended_thinking:
+            system_prompt = """You are a senior Python testing engineer specializing in fixing failing tests.
+
+EXTENDED THINKING MODE:
+You have additional thinking capacity to thoroughly analyze test failures and design comprehensive fixes.
+Take full advantage of this by:
+- Deeply analyzing failure patterns and root causes
+- Considering complex interaction effects and dependencies
+- Planning systematic fixes that address both symptoms and underlying issues
+- Designing comprehensive solutions that prevent similar failures
+- Thinking through potential side effects and edge cases in your fixes
+
+Analyze test failures and provide targeted fixes that maintain test quality and coverage."""
+        else:
+            system_prompt = "You are a senior Python testing engineer specializing in fixing failing tests. Analyze test failures and provide targeted fixes that maintain test quality and coverage."
+
+        # Prepare the user content with refinement context
+        user_content = f"""# Test Refinement Request
+
+{prompt}
+
+## Context
+- Run ID: {payload.get('run_id', 'unknown')}
+- Project: {payload.get('repo_meta', {}).get('branch', 'unknown branch')}
+- Environment: {payload.get('environment', {}).get('python', 'unknown')} on {payload.get('environment', {}).get('platform', 'unknown')}
+
+## Test Generation Summary
+- Tests written: {len(payload.get('tests_written', []))} files
+- Last command: {' '.join(payload.get('last_run_command', []))}
+- Total failures: {payload.get('failures_total', 0)}"""
+
+        # Calculate token allocation for refinement
+        failure_count = len(payload.get("failures", []))
+        if failure_count <= 2:
+            max_tokens = 8000  # Simple refinements
+        elif failure_count <= 5:
+            max_tokens = 12000  # Moderate complexity
+        else:
+            max_tokens = 16000  # Complex refinements
+
+        payload_data = {
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            "temperature": 0.2,  # Lower temperature for more consistent refinements
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"}
+        }
+
+        # Log refinement request
+        logger.info(f"Sending refinement request to Azure OpenAI using deployment: {self.deployment_name}")
+        logger.debug(f"Refinement payload size: {len(json.dumps(payload_data)):,} characters")
+
+        try:
+            response = requests.post(url, headers=headers, json=payload_data)
+            response.raise_for_status()
+
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+
+            # Parse JSON response
+            try:
+                refinement_result = json.loads(content)
+                logger.info("Successfully parsed refinement response from Azure OpenAI")
+
+                # Validate the response structure
+                if "updated_files" not in refinement_result:
+                    logger.warning("Refinement response missing 'updated_files' key")
+                    refinement_result["updated_files"] = []
+
+                return json.dumps(refinement_result)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error in refinement response from Azure OpenAI: {e}")
+                logger.error(f"Failed content preview: {repr(content[:200])}")
+                return json.dumps({
+                    "updated_files": [],
+                    "rationale": "Failed to parse AI response",
+                    "plan": "JSON parsing error occurred"
+                })
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response else None
+
+            if status_code == 401:
+                raise AuthenticationError(
+                    "Invalid API key or authentication failed for Azure OpenAI refinement",
+                    suggestion="Check your Azure OpenAI API key and ensure it's valid."
+                )
+            elif status_code == 429:
+                raise LLMClientError(
+                    "API rate limit exceeded for Azure OpenAI refinement",
+                    status_code=status_code,
+                    suggestion="Wait a moment and try again."
+                )
+            else:
+                raise LLMClientError(
+                    f"HTTP error {status_code} for Azure OpenAI refinement: {e}",
+                    status_code=status_code,
+                    suggestion="Check your network connection and try again."
+                )
+
+        except requests.exceptions.Timeout:
+            raise LLMClientError(
+                "Azure OpenAI refinement request timed out",
+                suggestion="Try again or reduce the complexity of the refinement request."
+            )
+        except requests.exceptions.ConnectionError:
+            raise LLMClientError(
+                "Failed to connect to Azure OpenAI for refinement",
+                suggestion="Check your internet connection and try again."
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during Azure OpenAI refinement: {type(e).__name__}: {e}")
+            raise LLMClientError(
+                f"Unexpected error during Azure OpenAI refinement: {e}",
+                suggestion="This appears to be a bug. Please try again or report the issue."
+            )
+
 class ClaudeAPIClient(LLMClient):
     """Client for interacting with Claude API directly."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", cost_manager=None, feedback=None):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", extended_thinking: bool = False,
+                 thinking_budget: int = 4096, cost_manager=None, feedback=None):
         self.api_key = api_key
         self.model = model
+        self.extended_thinking = extended_thinking
+        self.thinking_budget = thinking_budget
         self.api_url = "https://api.anthropic.com/v1/messages"
         self.cost_manager = cost_manager
         self.feedback = feedback
@@ -835,6 +1149,9 @@ class ClaudeAPIClient(LLMClient):
         # Extract codebase information for validation
         codebase_info = self._extract_codebase_info(source_files, project_root)
         user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
+
+        # Get system prompt with extended thinking instructions if enabled
+        system_prompt = get_system_prompt(config=None, extended_thinking=self.extended_thinking)
 
         # Calculate content size
         total_content = system_prompt + user_content
@@ -881,6 +1198,16 @@ class ClaudeAPIClient(LLMClient):
                 }
             ]
         }
+
+        # Add extended thinking configuration if enabled
+        if self.extended_thinking:
+            payload["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": self.thinking_budget
+            }
+            # Adjust max_tokens to account for thinking tokens
+            payload["max_tokens"] = max(max_tokens, self.thinking_budget + 4096)
+            logger.info(f"Extended thinking enabled with budget: {self.thinking_budget} tokens")
 
         # Log verbose prompt information if feedback is available
         self._log_verbose_prompt(self.model, system_prompt, user_content, file_count)
@@ -1021,5 +1348,210 @@ class ClaudeAPIClient(LLMClient):
             logger.debug(traceback.format_exc())
             raise LLMClientError(
                 f"Unexpected error: {e}",
+                suggestion="This appears to be a bug. Please try again or report the issue."
+            )
+
+    def refine_tests(self, request: Dict) -> str:
+        """Refine existing tests based on failure information using Claude API."""
+        payload = request.get("payload", {})
+        prompt = request.get("prompt", "")
+
+        if not prompt or not payload:
+            logger.warning("Empty refinement prompt or payload")
+            return json.dumps({
+                "updated_files": [],
+                "rationale": "No refinement data provided",
+                "plan": "Cannot proceed without proper refinement context"
+            })
+
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+
+        # Create system prompt for refinement with extended thinking if enabled
+        if self.extended_thinking:
+            system_prompt = """You are a senior Python testing engineer specializing in fixing failing tests.
+
+EXTENDED THINKING MODE:
+You have additional thinking capacity to thoroughly analyze test failures and design comprehensive fixes.
+Take full advantage of this by:
+- Deeply analyzing failure patterns and root causes
+- Considering complex interaction effects and dependencies
+- Planning systematic fixes that address both symptoms and underlying issues
+- Designing comprehensive solutions that prevent similar failures
+- Thinking through potential side effects and edge cases in your fixes
+
+Analyze test failures and provide targeted fixes that maintain test quality and coverage."""
+        else:
+            system_prompt = "You are a senior Python testing engineer specializing in fixing failing tests. Analyze test failures and provide targeted fixes that maintain test quality and coverage."
+
+        # Prepare the user content with refinement context
+        user_content = f"""# Test Refinement Request
+
+{prompt}
+
+## Context
+- Run ID: {payload.get('run_id', 'unknown')}
+- Project: {payload.get('repo_meta', {}).get('branch', 'unknown branch')}
+- Environment: {payload.get('environment', {}).get('python', 'unknown')} on {payload.get('environment', {}).get('platform', 'unknown')}
+
+## Test Generation Summary
+- Tests written: {len(payload.get('tests_written', []))} files
+- Last command: {' '.join(payload.get('last_run_command', []))}
+- Total failures: {payload.get('failures_total', 0)}"""
+
+        # Calculate token allocation for refinement
+        failure_count = len(payload.get("failures", []))
+        if failure_count <= 2:
+            max_tokens = 8000  # Simple refinements
+        elif failure_count <= 5:
+            max_tokens = 12000  # Moderate complexity
+        else:
+            max_tokens = 16000  # Complex refinements
+
+        payload_data = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": 0.2,  # Lower temperature for more consistent refinements
+            "system": system_prompt,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": user_content
+                }
+            ]
+        }
+
+        # Add extended thinking configuration for refinement if enabled
+        if self.extended_thinking:
+            payload_data["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": min(self.thinking_budget, 8192)  # Use smaller budget for refinements
+            }
+            # Adjust max_tokens to account for thinking tokens
+            payload_data["max_tokens"] = max(max_tokens, self.thinking_budget + 2048)
+
+        # Log refinement request
+        logger.info(f"Sending refinement request to Claude API using model: {self.model}")
+        logger.debug(f"Refinement payload size: {len(json.dumps(payload_data)):,} characters")
+
+        try:
+            response = requests.post(self.api_url, headers=headers, json=payload_data, timeout=120)
+            response.raise_for_status()
+
+            result = response.json()
+
+            # Check if response was truncated
+            stop_reason = result.get('stop_reason', 'unknown')
+            if stop_reason == 'max_tokens':
+                logger.warning(f"⚠️  Refinement response truncated at {max_tokens:,} tokens")
+
+            # Log token usage
+            if 'usage' in result:
+                input_tokens = result['usage'].get('input_tokens', 'N/A')
+                output_tokens = result['usage'].get('output_tokens', 'N/A')
+                logger.info(f"Refinement token usage - Input: {input_tokens}, Output: {output_tokens}")
+
+                # Log to cost manager if available
+                if self.cost_manager and input_tokens != 'N/A' and output_tokens != 'N/A':
+                    self.cost_manager.log_token_usage(self.model, input_tokens, output_tokens)
+
+            content = result['content'][0]['text']
+            logger.debug(f"Refinement response content length: {len(content):,} characters")
+
+            # Try to extract JSON from the response
+            json_content = self._extract_json_content(content)
+
+            # Check if we have any content to parse
+            if not json_content or not json_content.strip():
+                logger.error("Empty response from Claude API for refinement")
+                logger.debug(f"Original response content: {repr(content[:500])}")
+                return json.dumps({
+                    "updated_files": [],
+                    "rationale": "Empty response from AI model",
+                    "plan": "No refinement suggestions provided"
+                })
+
+            # Parse JSON response
+            try:
+                refinement_result = json.loads(json_content)
+                logger.info("Successfully parsed refinement response from Claude API")
+
+                # Validate the response structure
+                if "updated_files" not in refinement_result:
+                    logger.warning("Refinement response missing 'updated_files' key")
+                    refinement_result["updated_files"] = []
+
+                return json.dumps(refinement_result)
+
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error in refinement response: {e}")
+                logger.error(f"Failed content preview: {repr(json_content[:200])}")
+                if "Expecting value: line 1 column 1 (char 0)" in str(e):
+                    logger.error("The AI returned empty or non-JSON content for refinement")
+                    logger.debug(f"Full original response: {repr(content)}")
+
+                # Try to recover partial results
+                return self._try_recover_partial_results(json_content, e)
+
+        except requests.exceptions.HTTPError as e:
+            status_code = e.response.status_code if e.response else None
+
+            if status_code == 401:
+                raise AuthenticationError(
+                    "Invalid API key or authentication failed for refinement",
+                    suggestion="Check your Claude API key and ensure it's valid."
+                )
+            elif status_code == 429:
+                raise LLMClientError(
+                    "API rate limit exceeded for refinement",
+                    status_code=status_code,
+                    suggestion="Wait a moment and try again."
+                )
+            elif status_code == 400:
+                error_details = e.response.text
+                try:
+                    error_json = json.loads(error_details)
+                    error_msg = error_json.get('error', {}).get('message', 'Bad request')
+                except:
+                    error_msg = error_details[:200] + "..." if len(error_details) > 200 else error_details
+
+                raise LLMClientError(
+                    f"API request error for refinement: {error_msg}",
+                    status_code=status_code,
+                    suggestion="Check your refinement request parameters."
+                )
+            else:
+                raise LLMClientError(
+                    f"HTTP error {status_code} for refinement: {e}",
+                    status_code=status_code,
+                    suggestion="Check your network connection and try again."
+                )
+
+        except requests.exceptions.Timeout:
+            raise LLMClientError(
+                "Refinement request timed out after 120 seconds",
+                suggestion="Try again or reduce the complexity of the refinement request."
+            )
+        except requests.exceptions.ConnectionError:
+            raise LLMClientError(
+                "Failed to connect to Claude API for refinement",
+                suggestion="Check your internet connection and try again."
+            )
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON parse error in refinement: {e}")
+            return json.dumps({
+                "updated_files": [],
+                "rationale": "Failed to parse AI response",
+                "plan": "JSON parsing error occurred"
+            })
+        except Exception as e:
+            logger.error(f"Unexpected error during refinement: {type(e).__name__}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            raise LLMClientError(
+                f"Unexpected error during refinement: {e}",
                 suggestion="This appears to be a bug. Please try again or report the issue."
             )

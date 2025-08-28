@@ -116,8 +116,10 @@ class SmartTestGeneratorApp:
             llm_client = LLMClientFactory.create_client(
                 claude_api_key=llm_credentials.get('claude_api_key'),
                 claude_model=llm_credentials.get('claude_model', 'claude-3-5-sonnet-20241022'),
+                claude_extended_thinking=llm_credentials.get('claude_extended_thinking', False),
+                claude_thinking_budget=llm_credentials.get('claude_thinking_budget'),
                 azure_endpoint=llm_credentials.get('azure_endpoint'),
-                azure_api_key=llm_credentials.get('azure_api_key'), 
+                azure_api_key=llm_credentials.get('azure_api_key'),
                 azure_deployment=llm_credentials.get('azure_deployment'),
                 bedrock_role_arn=llm_credentials.get('bedrock_role_arn'),
                 bedrock_inference_profile=llm_credentials.get('bedrock_inference_profile'),

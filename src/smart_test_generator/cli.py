@@ -99,6 +99,16 @@ def setup_argparse() -> argparse.ArgumentParser:
         default="claude-sonnet-4-20250514",
         help="Claude model to use"
     )
+    parser.add_argument(
+        "--claude-extended-thinking",
+        action="store_true",
+        help="Enable extended thinking mode for Claude models (requires claude-sonnet-4-20250514 or claude-3-7-sonnet-20250219)"
+    )
+    parser.add_argument(
+        "--claude-thinking-budget",
+        type=int,
+        help="Thinking budget in tokens (1024-32000, default: 4096). Only used with --claude-extended-thinking"
+    )
 
     # AWS Bedrock arguments
     parser.add_argument("--bedrock-role-arn", help="AWS Role ARN to assume for Bedrock access")
@@ -553,6 +563,8 @@ def extract_llm_credentials(args) -> dict:
     creds = {
         'claude_api_key': args.claude_api_key or os.environ.get("CLAUDE_API_KEY"),
         'claude_model': args.claude_model,
+        'claude_extended_thinking': getattr(args, 'claude_extended_thinking', False),
+        'claude_thinking_budget': getattr(args, 'claude_thinking_budget', None),
         'azure_endpoint': args.endpoint,
         'azure_api_key': args.api_key,
         'azure_deployment': args.deployment,

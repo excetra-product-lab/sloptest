@@ -17,6 +17,8 @@ class LLMClientFactory:
     @staticmethod
     def create_client(claude_api_key: Optional[str] = None,
                      claude_model: str = "claude-sonnet-4-20250514",
+                     claude_extended_thinking: bool = False,
+                     claude_thinking_budget: Optional[int] = None,
                      azure_endpoint: Optional[str] = None,
                      azure_api_key: Optional[str] = None,
                      azure_deployment: Optional[str] = None,
@@ -36,7 +38,9 @@ class LLMClientFactory:
         
         try:
             if claude_api_key:
-                return LLMClientFactory._create_claude_client(claude_api_key, claude_model, feedback, cost_manager)
+                return LLMClientFactory._create_claude_client(
+                    claude_api_key, claude_model, claude_extended_thinking, claude_thinking_budget, feedback, cost_manager
+                )
             elif azure_endpoint and azure_api_key and azure_deployment:
                 return LLMClientFactory._create_azure_client(azure_endpoint, azure_api_key, azure_deployment, feedback, cost_manager)
             elif bedrock_role_arn and bedrock_inference_profile:
@@ -64,25 +68,56 @@ class LLMClientFactory:
             )
     
     @staticmethod
-    def _create_claude_client(api_key: str, model: str, feedback: UserFeedback, cost_manager=None) -> ClaudeAPIClient:
+    def _create_claude_client(api_key: str, model: str, extended_thinking: bool, thinking_budget: Optional[int],
+                            feedback: UserFeedback, cost_manager=None) -> ClaudeAPIClient:
         """Create a Claude API client."""
         # Validate Claude API key
         validated_key = Validator.validate_api_key(api_key, "Claude")
         
         # Validate model name if specified
         available_claude_models = [
-            "claude-opus-4-20250514", 
+            "claude-opus-4-20250514",
             "claude-sonnet-4-20250514",
             "claude-3-7-sonnet-20250219",
-            "claude-3-5-sonnet-20241022", 
+            "claude-3-5-sonnet-20241022",
             "claude-3-5-haiku-20241022",
             "claude-3-haiku-20240307"
         ]
         if model:
             Validator.validate_model_name(model, available_claude_models)
-        
-        feedback.info(f"Using Claude API with model: {model}")
-        return ClaudeAPIClient(validated_key, model, cost_manager, feedback)
+
+        # Validate extended thinking configuration
+        if extended_thinking:
+            # Extended thinking is only available for certain models
+            extended_thinking_supported_models = [
+                "claude-sonnet-4-20250514",
+                "claude-3-7-sonnet-20250219"
+            ]
+            if model not in extended_thinking_supported_models:
+                raise ValidationError(
+                    f"Extended thinking is not supported for model: {model}",
+                    suggestion=f"Use one of: {', '.join(extended_thinking_supported_models)}"
+                )
+
+            # Validate thinking budget if provided
+            if thinking_budget is not None:
+                if not (1024 <= thinking_budget <= 32000):
+                    raise ValidationError(
+                        f"Thinking budget must be between 1024 and 32000 tokens, got: {thinking_budget}",
+                        suggestion="Use a value between 1024 and 32000 tokens"
+                    )
+            else:
+                # Set default thinking budget
+                thinking_budget = 4096
+
+            feedback.info(f"Using Claude API with model: {model} (extended thinking enabled, budget: {thinking_budget} tokens)")
+        else:
+            feedback.info(f"Using Claude API with model: {model}")
+
+        return ClaudeAPIClient(
+            validated_key, model, extended_thinking=extended_thinking,
+            thinking_budget=thinking_budget if thinking_budget is not None else 4096, cost_manager=cost_manager, feedback=feedback
+        )
     
     @staticmethod
     def _create_azure_client(endpoint: str, api_key: str, deployment: str, feedback: UserFeedback, cost_manager=None) -> AzureOpenAIClient:
@@ -97,7 +132,7 @@ class LLMClientFactory:
             )
         
         feedback.info("Using Azure OpenAI")
-        return AzureOpenAIClient(endpoint, validated_key, deployment, cost_manager, feedback) 
+        return AzureOpenAIClient(endpoint, validated_key, deployment, cost_manager=cost_manager, feedback=feedback) 
 
     @staticmethod
     def _create_bedrock_client(*, role_arn: str, inference_profile: str, region: str, feedback: UserFeedback, cost_manager=None) -> BedrockClient:
