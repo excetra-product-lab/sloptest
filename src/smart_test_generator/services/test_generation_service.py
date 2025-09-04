@@ -480,6 +480,7 @@ class TestGenerationService(BaseService):
                             config=self.config,
                             apply_updates_fn=_apply_updates,
                             re_run_pytest_fn=_re_run_pytest,
+                            feedback=self.feedback,
                         )
 
                         # Summarize enhanced refinement outcome
@@ -506,7 +507,14 @@ class TestGenerationService(BaseService):
                                 insights = outcome.pattern_insights
                                 if 'failure_categories' in insights and insights['failure_categories']:
                                     categories = insights['failure_categories'][:2]
-                                    self.feedback.info(f"💡 Consider manual review for: {', '.join(categories)}")
+                                    # Filter out 'unknown' and provide meaningful categories
+                                    meaningful_categories = [cat for cat in categories if cat != 'unknown' and cat.strip()]
+                                    if meaningful_categories:
+                                        self.feedback.info(f"💡 Consider manual review for: {', '.join(meaningful_categories)}")
+                                    else:
+                                        self.feedback.info("💡 Consider manual review: Test failures have complex patterns that may need human analysis")
+                                else:
+                                    self.feedback.info("💡 Consider manual review: Run tests locally to understand remaining failure patterns")
                         
                         # Show confidence improvement if significant
                         if (hasattr(outcome, 'confidence_improvement') and 

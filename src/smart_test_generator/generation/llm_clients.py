@@ -551,6 +551,9 @@ class BedrockClient(LLMClient):
         codebase_info = self._extract_codebase_info(source_files, project_root)
         user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
 
+        # Get system prompt with extended thinking instructions if enabled
+        system_prompt = get_system_prompt(config=self.config, extended_thinking=self.extended_thinking)
+
         # Calculate optimal parameters for Bedrock
         file_count = len(re.findall(r'<file\s+filename=', xml_content))
         
@@ -588,22 +591,46 @@ class BedrockClient(LLMClient):
             
             # Invoke with generation parameters
             result = self.chat.invoke(messages, **generation_kwargs)
-            content = getattr(result, "content", "") or ""
-            # Normalize possible structured content into text
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict) and "text" in part:
-                        text_parts.append(part["text"])
+            raw_content = getattr(result, "content", "") or ""
+            
+            # Handle extended thinking response format for Bedrock (similar to Claude API)
+            content = ""
+            if isinstance(raw_content, list):
+                # Look for text blocks, ignoring thinking blocks
+                for part in raw_content:
+                    if isinstance(part, dict):
+                        # Prefer 'text' type blocks over others
+                        if part.get('type') == 'text' and 'text' in part:
+                            content = part['text']
+                            break
+                        elif 'text' in part:
+                            content = part['text']
+                            break
                     else:
                         try:
                             # Support objects with attribute access
                             maybe_text = getattr(part, "text", None)
                             if maybe_text:
-                                text_parts.append(maybe_text)
+                                content = maybe_text
+                                break
                         except Exception:
                             continue
-                content = "\n".join(text_parts)
+                # Fallback: join all text parts if no single text block found
+                if not content:
+                    text_parts = []
+                    for part in raw_content:
+                        if isinstance(part, dict) and "text" in part:
+                            text_parts.append(part["text"])
+                        else:
+                            try:
+                                maybe_text = getattr(part, "text", None)
+                                if maybe_text:
+                                    text_parts.append(maybe_text)
+                            except Exception:
+                                continue
+                    content = "\n".join(text_parts)
+            else:
+                content = str(raw_content)
 
             # Check if we have content to parse
             if not content or not content.strip():
@@ -700,7 +727,7 @@ class BedrockClient(LLMClient):
         else:
             max_tokens = 16000  # Complex refinements
 
-        logger.info(f"Using Bedrock for refinement with max_tokens: {max_tokens:,}")
+        logger.debug(f"Using Bedrock for refinement with max_tokens: {max_tokens:,}")
 
         # Log verbose prompt information if feedback is available
         self._log_verbose_prompt(f"AWS Bedrock ({self.inference_profile})", system_prompt, user_content, 1)
@@ -721,23 +748,46 @@ class BedrockClient(LLMClient):
 
             # Invoke with generation parameters
             result = self.chat.invoke(messages, **generation_kwargs)
-            content = getattr(result, "content", "") or ""
+            raw_content = getattr(result, "content", "") or ""
 
-            # Normalize possible structured content into text
-            if isinstance(content, list):
-                text_parts = []
-                for part in content:
-                    if isinstance(part, dict) and "text" in part:
-                        text_parts.append(part["text"])
+            # Handle extended thinking response format for Bedrock refinement (similar to Claude API)
+            content = ""
+            if isinstance(raw_content, list):
+                # Look for text blocks, ignoring thinking blocks
+                for part in raw_content:
+                    if isinstance(part, dict):
+                        # Prefer 'text' type blocks over others
+                        if part.get('type') == 'text' and 'text' in part:
+                            content = part['text']
+                            break
+                        elif 'text' in part:
+                            content = part['text']
+                            break
                     else:
                         try:
                             # Support objects with attribute access
                             maybe_text = getattr(part, "text", None)
                             if maybe_text:
-                                text_parts.append(maybe_text)
+                                content = maybe_text
+                                break
                         except Exception:
                             continue
-                content = "\n".join(text_parts)
+                # Fallback: join all text parts if no single text block found
+                if not content:
+                    text_parts = []
+                    for part in raw_content:
+                        if isinstance(part, dict) and "text" in part:
+                            text_parts.append(part["text"])
+                        else:
+                            try:
+                                maybe_text = getattr(part, "text", None)
+                                if maybe_text:
+                                    text_parts.append(maybe_text)
+                            except Exception:
+                                continue
+                    content = "\n".join(text_parts)
+            else:
+                content = str(raw_content)
 
             # Check if we have content to parse
             if not content or not content.strip():
@@ -753,7 +803,7 @@ class BedrockClient(LLMClient):
 
             try:
                 refinement_result = json.loads(json_content)
-                logger.info("Successfully parsed refinement response from Bedrock")
+                logger.debug("Successfully parsed refinement response from Bedrock")
 
                 # Validate the response structure
                 if "updated_files" not in refinement_result:
@@ -831,6 +881,9 @@ class AzureOpenAIClient(LLMClient):
         # Extract codebase information for validation
         codebase_info = self._extract_codebase_info(source_files, project_root)
         user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
+
+        # Get system prompt with extended thinking instructions if enabled
+        system_prompt = get_system_prompt(config=self.config, extended_thinking=self.extended_thinking)
 
         # Log verbose prompt information if feedback is available
         file_count = len(re.findall(r'<file\s+filename=', xml_content))
@@ -922,7 +975,7 @@ class AzureOpenAIClient(LLMClient):
         }
 
         # Log refinement request
-        logger.info(f"Sending refinement request to Azure OpenAI using deployment: {self.deployment_name}")
+        logger.debug(f"Sending refinement request to Azure OpenAI using deployment: {self.deployment_name}")
         logger.debug(f"Refinement payload size: {len(json.dumps(payload_data)):,} characters")
 
         try:
@@ -935,7 +988,7 @@ class AzureOpenAIClient(LLMClient):
             # Parse JSON response
             try:
                 refinement_result = json.loads(content)
-                logger.info("Successfully parsed refinement response from Azure OpenAI")
+                logger.debug("Successfully parsed refinement response from Azure OpenAI")
 
                 # Validate the response structure
                 if "updated_files" not in refinement_result:
@@ -994,8 +1047,8 @@ class AzureOpenAIClient(LLMClient):
 class ClaudeAPIClient(LLMClient):
     """Client for interacting with Claude API directly."""
 
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", extended_thinking: bool = False,
-                 thinking_budget: int = 4096, cost_manager=None, feedback=None, config=None):
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", extended_thinking: bool = True,
+                 thinking_budget: int = 8192, cost_manager=None, feedback=None, config=None):
         self.api_key = api_key
         self.model = model
         self.extended_thinking = extended_thinking
@@ -1057,7 +1110,6 @@ class ClaudeAPIClient(LLMClient):
         payload = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": 0.3,
             "system": system_prompt,
             "messages": [
                 {
@@ -1076,6 +1128,9 @@ class ClaudeAPIClient(LLMClient):
             # Adjust max_tokens to account for thinking tokens
             payload["max_tokens"] = max(max_tokens, self.thinking_budget + 4096)
             logger.info(f"Extended thinking enabled with budget: {self.thinking_budget} tokens")
+        else:
+            # Only add temperature when extended thinking is disabled (per Anthropic docs)
+            payload["temperature"] = 0.3
 
         # Log verbose prompt information if feedback is available
         self._log_verbose_prompt(self.model, system_prompt, user_content, file_count)
@@ -1108,7 +1163,17 @@ class ClaudeAPIClient(LLMClient):
                 if output_tokens != 'N/A' and output_tokens >= max_tokens - 100:
                     logger.warning(f"Output tokens ({output_tokens}) near limit ({max_tokens})")
 
-            content = result['content'][0]['text']
+            # Handle extended thinking response format
+            content = ""
+            for block in result['content']:
+                if block.get('type') == 'text':
+                    content = block['text']
+                    break
+            else:
+                # Fallback for non-extended thinking responses
+                if result['content'] and 'text' in result['content'][0]:
+                    content = result['content'][0]['text']
+            
             logger.debug(f"Response content length: {len(content):,} characters")
 
             # Try to extract JSON from the response
@@ -1269,7 +1334,6 @@ class ClaudeAPIClient(LLMClient):
         payload_data = {
             "model": self.model,
             "max_tokens": max_tokens,
-            "temperature": 0.2,  # Lower temperature for more consistent refinements
             "system": system_prompt,
             "messages": [
                 {
@@ -1287,9 +1351,12 @@ class ClaudeAPIClient(LLMClient):
             }
             # Adjust max_tokens to account for thinking tokens
             payload_data["max_tokens"] = max(max_tokens, self.thinking_budget + 2048)
+        else:
+            # Only add temperature when extended thinking is disabled (per Anthropic docs)
+            payload_data["temperature"] = 0.2
 
         # Log refinement request
-        logger.info(f"Sending refinement request to Claude API using model: {self.model}")
+        logger.debug(f"Sending refinement request to Claude API using model: {self.model}")
         logger.debug(f"Refinement payload size: {len(json.dumps(payload_data)):,} characters")
 
         try:
@@ -1307,13 +1374,23 @@ class ClaudeAPIClient(LLMClient):
             if 'usage' in result:
                 input_tokens = result['usage'].get('input_tokens', 'N/A')
                 output_tokens = result['usage'].get('output_tokens', 'N/A')
-                logger.info(f"Refinement token usage - Input: {input_tokens}, Output: {output_tokens}")
+                logger.debug(f"Refinement token usage - Input: {input_tokens}, Output: {output_tokens}")
 
                 # Log to cost manager if available
                 if self.cost_manager and input_tokens != 'N/A' and output_tokens != 'N/A':
                     self.cost_manager.log_token_usage(self.model, input_tokens, output_tokens)
 
-            content = result['content'][0]['text']
+            # Handle extended thinking response format for refinements
+            content = ""
+            for block in result['content']:
+                if block.get('type') == 'text':
+                    content = block['text']
+                    break
+            else:
+                # Fallback for non-extended thinking responses
+                if result['content'] and 'text' in result['content'][0]:
+                    content = result['content'][0]['text']
+                    
             logger.debug(f"Refinement response content length: {len(content):,} characters")
 
             # Try to extract JSON from the response
@@ -1332,7 +1409,7 @@ class ClaudeAPIClient(LLMClient):
             # Parse JSON response
             try:
                 refinement_result = json.loads(json_content)
-                logger.info("Successfully parsed refinement response from Claude API")
+                logger.debug("Successfully parsed refinement response from Claude API")
 
                 # Validate the response structure
                 if "updated_files" not in refinement_result:

@@ -176,19 +176,50 @@ class SmartTestGeneratorApp:
                 files_to_process, coverage_data, self.coverage_service
             )
             
+            # Run quality analysis on newly generated tests (if enabled)
+            quality_reports = {}
+            if self.config.get('quality.enable_quality_analysis', True):
+                self.feedback.info("Running quality analysis on generated tests...")
+                
+                # Re-create test plans to include newly generated test files
+                updated_files_to_process, _, updated_coverage_data = self.analysis_service.analyze_files_for_generation(
+                    files_to_process, force=True  # Force re-analysis to pick up new test files
+                )
+                updated_test_plans = self.analysis_service.create_test_plans(updated_files_to_process, updated_coverage_data)
+                
+                # Run quality analysis including mutation testing
+                quality_reports = self.analysis_service.analyze_test_quality(updated_test_plans)
+                
+                # Display beautiful quality analysis results
+                if quality_reports:
+                    self.feedback.quality_analysis_display(quality_reports, self.project_root)
+                else:
+                    self.feedback.info("Quality analysis skipped - no existing test files found for analysis")
+            else:
+                self.feedback.info("Quality analysis disabled in configuration")
+            
             # Generate final report
             final_report = self.test_generation_service.generate_final_report(
                 generated_tests, coverage_improvement
             )
             
             # Show summary
-            self.feedback.summary("Test Generation Summary", {
+            summary_data = {
                 "Files processed": len(test_plans),
                 "Tests generated": len(generated_tests),
                 "Coverage before": f"{coverage_improvement.get('before', 0):.1f}%",
                 "Coverage after": f"{coverage_improvement.get('after', 0):.1f}%",
                 "Improvement": f"+{coverage_improvement.get('improvement', 0):.1f}%"
-            })
+            }
+            
+            # Add quality metrics to summary if available
+            if quality_reports:
+                avg_quality = sum(report.quality_report.overall_score for report in quality_reports.values()) / len(quality_reports)
+                avg_mutation = sum(report.mutation_score.mutation_score for report in quality_reports.values()) / len(quality_reports)
+                summary_data["Average quality score"] = f"{avg_quality:.1f}%"
+                summary_data["Average mutation score"] = f"{avg_mutation:.1f}%"
+            
+            self.feedback.summary("Test Generation & Quality Summary", summary_data)
             
             # Show cost statistics after generation
             self._show_cost_statistics(cost_manager)

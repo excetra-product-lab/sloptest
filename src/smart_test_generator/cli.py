@@ -100,14 +100,16 @@ def setup_argparse() -> argparse.ArgumentParser:
         help="Claude model to use"
     )
     parser.add_argument(
-        "--claude-extended-thinking",
-        action="store_true",
-        help="Enable extended thinking mode for Claude models (requires claude-sonnet-4-20250514 or claude-3-7-sonnet-20250219)"
+        "--claude-no-extended-thinking",
+        dest="claude_extended_thinking",
+        action="store_false",
+        default=True,
+        help="Disable extended thinking mode for Claude models (extended thinking is now enabled by default)"
     )
     parser.add_argument(
         "--claude-thinking-budget",
         type=int,
-        help="Thinking budget in tokens (1024-32000, default: 4096). Only used with --claude-extended-thinking"
+        help="Thinking budget in tokens (1024-32000, default: 8192). Used with extended thinking mode"
     )
 
     # AWS Bedrock arguments
@@ -231,6 +233,12 @@ def setup_argparse() -> argparse.ArgumentParser:
         dest="refine_enable",
         action="store_false",
         help="Disable refinement loop"
+    )
+    parser.add_argument(
+        "--no-quality",
+        dest="enable_quality_analysis",
+        action="store_false",
+        help="Disable quality analysis and mutation testing after test generation (faster generation)"
     )
     parser.add_argument(
         "--retries",
@@ -452,6 +460,11 @@ def _apply_cli_overrides_to_config(args, config: Config) -> None:
     if getattr(args, 'refine_max_total_minutes', None) is not None:
         ref_cfg['max_total_minutes'] = int(args.refine_max_total_minutes)
 
+    # Quality analysis settings
+    quality_cfg = config.config.setdefault('quality', {})
+    if getattr(args, 'enable_quality_analysis', None) is not None:
+        quality_cfg['enable_quality_analysis'] = bool(args.enable_quality_analysis)
+
     # Merge strategy
     merge_cfg = config.config['test_generation']['generation'].setdefault('merge', {
         'strategy': 'append',
@@ -563,7 +576,7 @@ def extract_llm_credentials(args) -> dict:
     creds = {
         'claude_api_key': args.claude_api_key or os.environ.get("CLAUDE_API_KEY"),
         'claude_model': args.claude_model,
-        'claude_extended_thinking': getattr(args, 'claude_extended_thinking', False),
+        'claude_extended_thinking': getattr(args, 'claude_extended_thinking', True),
         'claude_thinking_budget': getattr(args, 'claude_thinking_budget', None),
         'azure_endpoint': args.endpoint,
         'azure_api_key': args.api_key,
