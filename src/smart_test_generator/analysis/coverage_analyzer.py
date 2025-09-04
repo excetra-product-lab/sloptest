@@ -295,6 +295,13 @@ class CoverageAnalyzer:
         self.config = config
         self.coverage_data = {}
         self.ast_analyzer = ASTCoverageAnalyzer(project_root)
+        
+        # Initialize environment service for enhanced environment detection
+        try:
+            from smart_test_generator.services.environment_service import EnvironmentService
+            self.environment_service = EnvironmentService(project_root, config)
+        except ImportError:
+            self.environment_service = None
 
     def run_coverage_analysis(self, source_files: List[str], test_files: List[str] = None) -> Dict[str, TestCoverage]:
         """Run pytest with coverage to get detailed metrics, fallback to AST analysis."""
@@ -338,9 +345,16 @@ class CoverageAnalyzer:
         from smart_test_generator.analysis.coverage.runner import run_pytest
         from smart_test_generator.analysis.coverage.errors import parse_errors
 
-        spec = build_pytest_command(project_root=self.project_root, config=self.config, preflight_result=None)
+        spec = build_pytest_command(
+            project_root=self.project_root, 
+            config=self.config, 
+            preflight_result=None,
+            environment_service=self.environment_service
+        )
 
-        run_result = run_pytest(spec)
+        # Always enable JUnit XML for reliable failure parsing (primary method)
+        junit_xml_enabled = bool(self.config.get('test_generation.coverage.junit_xml', True))
+        run_result = run_pytest(spec, junit_xml=junit_xml_enabled)
 
         # Check if .coverage file was created
         coverage_file = self.project_root / ".coverage"
@@ -348,17 +362,39 @@ class CoverageAnalyzer:
             return self._parse_coverage_file(coverage_file, source_files)
         else:
             logger.warning("No .coverage file created - tests may not exist yet or pytest failed")
+            
+            # If JUnit XML was generated, parse test failures for better diagnostics
+            junit_failures = None
+            if junit_xml_enabled and run_result.junit_xml_path and Path(run_result.junit_xml_path).exists():
+                try:
+                    from smart_test_generator.analysis.coverage.failure_parser import parse_junit_xml
+                    parsed_failures = parse_junit_xml(Path(run_result.junit_xml_path))
+                    if parsed_failures.total > 0:
+                        junit_failures = parsed_failures
+                        logger.info(f"JUnit XML parsing found {parsed_failures.total} test failures")
+                except Exception as e:
+                    logger.debug(f"JUnit XML parsing failed: {e}")
+            
             # Provide actionable guidance using error parser
             report = parse_errors(run_result, self.preflight_check())
             for line in report.excerpts[-20:]:  # log tail for context
                 logger.debug(line)
-            guidance_text = "; ".join(report.guidance) if report.guidance else "See pytest output for details"
+            
+            # Enhanced guidance with JUnit XML failure info
+            guidance_parts = list(report.guidance) if report.guidance else []
+            if junit_failures:
+                failure_summary = f"Found {junit_failures.total} test failures - check test implementations"
+                guidance_parts.insert(0, failure_summary)
+            
+            guidance_text = "; ".join(guidance_parts) if guidance_parts else "See pytest output for details"
+            
             from smart_test_generator.exceptions import CoverageAnalysisError
             exit_code = 2 if report.kind == "env" else (124 if report.kind == "timeout" else 1)
             raise CoverageAnalysisError(
                 f"No coverage file generated ({report.kind}). {guidance_text}",
                 kind=report.kind,
                 exit_code=exit_code,
+                failures=junit_failures  # Include parsed failures for potential use
             )
 
     
@@ -371,31 +407,81 @@ class CoverageAnalyzer:
         - venv_active: bool
         - pytest_importable: bool
         - coverage_importable: bool
+        - environment: dict with environment detection results
+        - dependencies: dict with dependency status
         - messages: List[str] guidance messages
         """
         messages: List[str] = []
 
-        # Detect virtualenv activation
-        venv_active = bool(os.environ.get("VIRTUAL_ENV")) or (getattr(sys, 'base_prefix', sys.prefix) != sys.prefix)
+        # Enhanced environment detection using EnvironmentService
+        env_info = None
+        if self.environment_service:
+            try:
+                env_info = self.environment_service.detect_current_environment()
+                messages.append(f"Environment: {env_info.manager.value} "
+                              f"(Python: {env_info.python_version})")
+            except Exception as e:
+                messages.append(f"Environment detection failed: {e}")
 
-        # Try importing pytest/coverage in current interpreter
+        # Detect virtualenv activation (enhanced)
+        if env_info:
+            venv_active = env_info.is_virtual_env
+        else:
+            venv_active = bool(os.environ.get("VIRTUAL_ENV")) or (getattr(sys, 'base_prefix', sys.prefix) != sys.prefix)
+
+        # Enhanced dependency validation using DependencyService
+        dependency_status = {}
+        if self.environment_service and hasattr(self, 'dependency_service'):
+            try:
+                from smart_test_generator.services.dependency_service import DependencyService
+                dep_service = DependencyService(self.project_root, self.config)
+                
+                # Check required dependencies
+                required_deps = ["pytest", "pytest-cov"]
+                missing_deps = dep_service.check_missing_deps(required_deps)
+                conflicts = dep_service.check_conflicts()
+                
+                dependency_status = {
+                    "missing_deps": missing_deps,
+                    "conflicts": conflicts,
+                    "pytest": dep_service.get_dependency_info("pytest"),
+                    "pytest_cov": dep_service.get_dependency_info("pytest-cov")
+                }
+                
+                if missing_deps:
+                    # Get installation command based on environment manager
+                    env_manager = env_info.manager.value if env_info else "pip"
+                    for dep in missing_deps:
+                        install_cmd = dep_service.get_installation_command(dep, env_manager)
+                        messages.append(f"Missing dependency: {dep}. Install with: {' '.join(install_cmd)}")
+                
+                if conflicts:
+                    for conflict in conflicts:
+                        messages.append(f"Dependency conflict: {conflict}")
+                        
+            except Exception as e:
+                messages.append(f"Dependency validation failed: {e}")
+
+        # Fallback to original import checks
         pytest_importable = True
         coverage_importable = True
         try:
             import pytest  # type: ignore  # noqa: F401
         except Exception:
             pytest_importable = False
-            messages.append(
-                f"pytest is not importable in interpreter '{sys.executable}'. Install with 'pip install pytest pytest-cov' in the active environment."
-            )
+            if not dependency_status.get("missing_deps") or "pytest" not in dependency_status["missing_deps"]:
+                messages.append(
+                    f"pytest is not importable in interpreter '{sys.executable}'. Install with 'pip install pytest pytest-cov' in the active environment."
+                )
 
         try:
             import coverage as _cov  # type: ignore  # noqa: F401
         except Exception:
             coverage_importable = False
-            messages.append(
-                f"coverage.py is not importable in interpreter '{sys.executable}'. Install with 'pip install coverage pytest-cov'."
-            )
+            if not dependency_status.get("missing_deps") or "pytest-cov" not in dependency_status["missing_deps"]:
+                messages.append(
+                    f"coverage.py is not importable in interpreter '{sys.executable}'. Install with 'pip install coverage pytest-cov'."
+                )
 
         # Suggest activation commands if a local venv exists but not active
         if not venv_active:
@@ -419,13 +505,31 @@ class CoverageAnalyzer:
                 )
 
         status = "ok" if (pytest_importable and coverage_importable) else "warn"
-        return {
+        
+        result = {
             "status": status,
             "venv_active": venv_active,
             "pytest_importable": pytest_importable,
             "coverage_importable": coverage_importable,
             "messages": messages,
         }
+        
+        # Add enhanced environment information
+        if env_info:
+            result["environment"] = {
+                "manager": env_info.manager.value,
+                "python_executable": env_info.python_executable,
+                "python_version": env_info.python_version,
+                "virtual_env_path": env_info.virtual_env_path,
+                "is_virtual_env": env_info.is_virtual_env,
+                "detected_files": env_info.detected_files,
+            }
+        
+        # Add dependency information
+        if dependency_status:
+            result["dependencies"] = dependency_status
+        
+        return result
 
     def _run_ast_coverage_fallback(self, source_files: List[str], test_files: List[str] = None) -> Dict[str, TestCoverage]:
         """Run AST-based coverage analysis as fallback."""

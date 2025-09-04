@@ -26,7 +26,8 @@ class LLMClientFactory:
                      bedrock_inference_profile: Optional[str] = None,
                      bedrock_region: Optional[str] = None,
                      feedback: Optional[UserFeedback] = None,
-                     cost_manager=None) -> LLMClient:
+                     cost_manager=None,
+                     config=None) -> LLMClient:
         """Create an LLM client based on provided credentials."""
         
         # Try to get Claude API key from environment if not provided
@@ -39,17 +40,20 @@ class LLMClientFactory:
         try:
             if claude_api_key:
                 return LLMClientFactory._create_claude_client(
-                    claude_api_key, claude_model, claude_extended_thinking, claude_thinking_budget, feedback, cost_manager
+                    claude_api_key, claude_model, claude_extended_thinking, claude_thinking_budget, feedback, cost_manager, config
                 )
             elif azure_endpoint and azure_api_key and azure_deployment:
-                return LLMClientFactory._create_azure_client(azure_endpoint, azure_api_key, azure_deployment, feedback, cost_manager)
+                return LLMClientFactory._create_azure_client(azure_endpoint, azure_api_key, azure_deployment, 
+                                                            claude_extended_thinking, feedback, cost_manager, config)
             elif bedrock_role_arn and bedrock_inference_profile:
                 return LLMClientFactory._create_bedrock_client(
                     role_arn=bedrock_role_arn,
                     inference_profile=bedrock_inference_profile,
                     region=bedrock_region or "us-east-1",
+                    extended_thinking=claude_extended_thinking,  # Use Claude's extended thinking setting
                     feedback=feedback,
                     cost_manager=cost_manager,
+                    config=config,
                 )
             else:
                 raise AuthenticationError(
@@ -69,7 +73,7 @@ class LLMClientFactory:
     
     @staticmethod
     def _create_claude_client(api_key: str, model: str, extended_thinking: bool, thinking_budget: Optional[int],
-                            feedback: UserFeedback, cost_manager=None) -> ClaudeAPIClient:
+                            feedback: UserFeedback, cost_manager=None, config=None) -> ClaudeAPIClient:
         """Create a Claude API client."""
         # Validate Claude API key
         validated_key = Validator.validate_api_key(api_key, "Claude")
@@ -116,11 +120,12 @@ class LLMClientFactory:
 
         return ClaudeAPIClient(
             validated_key, model, extended_thinking=extended_thinking,
-            thinking_budget=thinking_budget if thinking_budget is not None else 4096, cost_manager=cost_manager, feedback=feedback
+            thinking_budget=thinking_budget if thinking_budget is not None else 4096, cost_manager=cost_manager, feedback=feedback, config=config
         )
     
     @staticmethod
-    def _create_azure_client(endpoint: str, api_key: str, deployment: str, feedback: UserFeedback, cost_manager=None) -> AzureOpenAIClient:
+    def _create_azure_client(endpoint: str, api_key: str, deployment: str, extended_thinking: bool, 
+                           feedback: UserFeedback, cost_manager=None, config=None) -> AzureOpenAIClient:
         """Create an Azure OpenAI client."""
         # Validate Azure OpenAI credentials
         validated_key = Validator.validate_api_key(api_key, "Azure OpenAI")
@@ -132,9 +137,12 @@ class LLMClientFactory:
             )
         
         feedback.info("Using Azure OpenAI")
-        return AzureOpenAIClient(endpoint, validated_key, deployment, cost_manager=cost_manager, feedback=feedback) 
+        return AzureOpenAIClient(endpoint, validated_key, deployment, extended_thinking=extended_thinking,
+                               cost_manager=cost_manager, feedback=feedback, config=config) 
 
     @staticmethod
-    def _create_bedrock_client(*, role_arn: str, inference_profile: str, region: str, feedback: UserFeedback, cost_manager=None) -> BedrockClient:
+    def _create_bedrock_client(*, role_arn: str, inference_profile: str, region: str, extended_thinking: bool, 
+                             feedback: UserFeedback, cost_manager=None, config=None) -> BedrockClient:
         feedback.info(f"Using AWS Bedrock (inference profile: {inference_profile}, region: {region})")
-        return BedrockClient(role_arn=role_arn, inference_profile=inference_profile, region=region, cost_manager=cost_manager, feedback=feedback)
+        return BedrockClient(role_arn=role_arn, inference_profile=inference_profile, region=region, 
+                           extended_thinking=extended_thinking, cost_manager=cost_manager, feedback=feedback, config=config)

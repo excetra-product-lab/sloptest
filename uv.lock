@@ -1375,7 +1375,7 @@ wheels = [
 ]
 
 [[package]]
-name = "smart-test-generator"
+name = "sloptest"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

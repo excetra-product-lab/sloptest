@@ -293,16 +293,16 @@ class TestGenerationService(BaseService):
     def _write_single_test_file(self, source_path: str, test_content: str) -> TestFileResult:
         """Write a single test file and return the result.
 
-        Route through merge entrypoint (defaults to append/replace stub).
+        Route through merge entrypoint (defaults to ast-merge).
         """
         try:
             # Route through writer with configured strategy and dry-run
             result = self.writer.write_or_merge_test_file(
                 source_path,
                 test_content,
-                strategy=self.config.get('test_generation.generation.merge.strategy', 'append')
+                strategy=self.config.get('test_generation.generation.merge.strategy', 'ast-merge')
                 if isinstance(getattr(self.config, 'config', {}), dict)
-                else 'append',
+                else 'ast-merge',
                 dry_run=bool(self.config.get('test_generation.generation.merge.dry_run', False))
                 if isinstance(getattr(self.config, 'config', {}), dict)
                 else False,
@@ -361,7 +361,8 @@ class TestGenerationService(BaseService):
 
         # Execute
         self.feedback.subsection_header("Post-generation: running pytest")
-        junit = bool(self.config.get('test_generation.generation.test_runner.junit_xml', False))
+        # Always enable JUnit XML for reliable failure parsing in refinement
+        junit = True  # Force JUnit XML for post-generation runs
         result = run_pytest(spec, junit_xml=junit)
         # Summarize briefly
         summary = f"pytest exit {result.returncode}"
@@ -383,11 +384,16 @@ class TestGenerationService(BaseService):
                     latest = max(subdirs, key=lambda p: p.name, default=None) if subdirs else None
                 target_dir = latest or artifacts_root
 
+                # Prioritize JUnit XML parsing for reliability (always enabled above)
                 parsed = None
-                if junit and result.junit_xml_path:
+                if result.junit_xml_path and Path(result.junit_xml_path).exists():
                     parsed = parse_junit_xml(Path(result.junit_xml_path))
+                
+                # Fallback to text parsing only if XML parsing completely failed
                 if not parsed or parsed.total == 0:
+                    self.feedback.debug("JUnit XML parsing failed, falling back to stdout/stderr parsing")
                     parsed = parse_stdout_stderr(result.stdout, result.stderr)
+                
                 write_failures_json(parsed, target_dir)
             except Exception:
                 pass
@@ -411,9 +417,10 @@ class TestGenerationService(BaseService):
                             parse_junit_xml as _parse_junit_xml,
                             parse_stdout_stderr as _parse_stdout_stderr,
                         )
+                        # Use the same failure parsing logic: prioritize JUnit XML
                         parsed_failures = parsed
                         if not parsed_failures or parsed_failures.total == 0:
-                            if junit and result.junit_xml_path:
+                            if result.junit_xml_path and Path(result.junit_xml_path).exists():
                                 parsed_failures = _parse_junit_xml(Path(result.junit_xml_path))
                             if not parsed_failures or parsed_failures.total == 0:
                                 parsed_failures = _parse_stdout_stderr(result.stdout, result.stderr)
@@ -421,12 +428,19 @@ class TestGenerationService(BaseService):
                         parsed_failures = None
 
                     if parsed_failures and parsed_failures.total > 0:
+                        # Get git context configuration
+                        git_context_cfg = refine_cfg.get('git_context', {})
+                        include_git_context = git_context_cfg.get('enable', True)
+                        include_pattern_analysis = self.config.get('quality.enable_pattern_analysis', True)
+                        
                         payload = build_payload(
                             failures=parsed_failures,
                             project_root=self.project_root,
                             config=self.config,
                             tests_written=written_files,
                             last_run_command=result.cmd,
+                            include_git_context=include_git_context,
+                            include_pattern_analysis=include_pattern_analysis,
                         )
 
                         # Prepare artifacts dir for refinement using the run_id from payload
@@ -455,7 +469,7 @@ class TestGenerationService(BaseService):
 
                         # Closure to rerun pytest and return exit code
                         def _re_run_pytest() -> int:
-                            rr = run_pytest(spec, junit_xml=junit)
+                            rr = run_pytest(spec, junit_xml=True)  # Always use JUnit XML for consistent parsing
                             return int(rr.returncode)
 
                         outcome = run_refinement_cycle(
@@ -468,15 +482,38 @@ class TestGenerationService(BaseService):
                             re_run_pytest_fn=_re_run_pytest,
                         )
 
-                        # Summarize refinement outcome
+                        # Summarize enhanced refinement outcome
                         if outcome.final_exit_code == 0:
-                            self.feedback.success(
-                                f"Refinement succeeded after {outcome.iterations} iteration(s)"
-                            )
+                            success_msg = f"✅ Refinement succeeded after {outcome.iterations} iteration(s)"
+                            if hasattr(outcome, 'retry_strategy_used') and outcome.retry_strategy_used != "default":
+                                success_msg += f" using {outcome.retry_strategy_used} strategy"
+                            self.feedback.success(success_msg)
+                            
+                            # Show pattern insights if available
+                            if hasattr(outcome, 'pattern_insights') and outcome.pattern_insights:
+                                insights = outcome.pattern_insights
+                                if 'failure_categories' in insights:
+                                    categories = ", ".join(insights['failure_categories'][:3])
+                                    self.feedback.info(f"📊 Addressed failure patterns: {categories}")
                         else:
-                            self.feedback.warning(
-                                f"Refinement ended with failing tests after {outcome.iterations} iteration(s)"
-                            )
+                            warning_msg = f"⚠️  Refinement ended with failing tests after {outcome.iterations} iteration(s)"
+                            if hasattr(outcome, 'retry_strategy_used') and outcome.retry_strategy_used != "default":
+                                warning_msg += f" (used {outcome.retry_strategy_used} strategy)"
+                            self.feedback.warning(warning_msg)
+                            
+                            # Suggest next steps based on pattern analysis
+                            if hasattr(outcome, 'pattern_insights') and outcome.pattern_insights:
+                                insights = outcome.pattern_insights
+                                if 'failure_categories' in insights and insights['failure_categories']:
+                                    categories = insights['failure_categories'][:2]
+                                    self.feedback.info(f"💡 Consider manual review for: {', '.join(categories)}")
+                        
+                        # Show confidence improvement if significant
+                        if (hasattr(outcome, 'confidence_improvement') and 
+                            outcome.confidence_improvement and 
+                            abs(outcome.confidence_improvement) > 0.1):
+                            direction = "improved" if outcome.confidence_improvement > 0 else "decreased"
+                            self.feedback.info(f"🎯 Analysis confidence {direction} by {abs(outcome.confidence_improvement):.1%}")
 
             except Exception as e:
                 self.feedback.warning(

@@ -57,10 +57,17 @@ class TestGenerationTracker:
         """Determine if tests should be generated for a file and why."""
         if force:
             return True, "Force flag set"
+            
+        # Check if we should always analyze new files even if they have existing tests
+        always_analyze_new = config.get('test_generation.generation.always_analyze_new_files', False)
 
         # New file - only considered new if not in state AND no coverage provided
         if filepath not in self.state.tested_elements and not current_coverage:
             return True, "New file detected"
+            
+        # If always_analyze_new_files is enabled, analyze files not in our state
+        if always_analyze_new and filepath not in self.state.tested_elements:
+            return True, "New file analysis forced by configuration"
 
         # No coverage data - check if tests exist before defaulting to generation
         if not current_coverage:
@@ -85,9 +92,15 @@ class TestGenerationTracker:
                     return True, f"Coverage dropped by {coverage_drop:.1f}%"
 
         # Coverage below minimum threshold
-        min_coverage = config.get('test_generation.coverage.minimum_line_coverage', 80)
-        if current_coverage.line_coverage < min_coverage:
-            return True, f"Coverage ({current_coverage.line_coverage:.1f}%) below minimum ({min_coverage}%)"
+        min_line_coverage = config.get('test_generation.coverage.minimum_line_coverage', 80)
+        min_branch_coverage = config.get('test_generation.coverage.minimum_branch_coverage', 70)
+        
+        if current_coverage.line_coverage < min_line_coverage:
+            return True, f"Line coverage ({current_coverage.line_coverage:.1f}%) below minimum ({min_line_coverage}%)"
+            
+        # Check branch coverage if available
+        if hasattr(current_coverage, 'branch_coverage') and current_coverage.branch_coverage < min_branch_coverage:
+            return True, f"Branch coverage ({current_coverage.branch_coverage:.1f}%) below minimum ({min_branch_coverage}%)"
 
         # Check for untested elements
         if current_coverage.uncovered_functions:

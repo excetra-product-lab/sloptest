@@ -1,0 +1,79 @@
+# Reusable templates and common content
+# These templates are used across different prompt types
+
+common:
+  # Directory structure template
+  directory_structure_template: |
+    <directory_structure>
+    {directory_structure}
+    </directory_structure>
+
+  # Code files wrapper template
+  code_files_template: |
+    <code_files>
+    {xml_content}
+    </code_files>
+
+  # User content template (combines directory + code + validation)
+  user_content_template: |
+    <directory_structure>
+    {directory_structure}
+    </directory_structure>
+
+    <code_files>
+    {xml_content}
+    </code_files>{validation_context}
+
+    Generate unit tests for each file in the code_files section above.
+
+  # Validation context template
+  validation_context_template: |
+
+    AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
+    {imports}
+
+    CLASS_SIGNATURES (Required fields for dataclasses):
+    {classes}
+
+  # Error messages and feedback
+  error_messages:
+    empty_response: |
+      Empty response from {model} API
+    
+    json_parse_error: |
+      JSON parse error from {model}: {error}
+    
+    truncation_warning: |
+      Response truncated at {tokens} tokens - this will likely cause JSON parsing errors
+    
+    context_too_large: |
+      Try reducing batch size (current: {file_count} files) or simplify the source code.
+    
+    batch_size_suggestion: |
+      SUGGESTION: Try running with --batch-size {suggested_size} to reduce context size.
+
+# Content size and token management
+token_management:
+  # File count to token allocation mapping
+  token_allocation:
+    single_file: 6000      # Single files get detailed tests
+    small_batch: 5000      # Small batches (≤3 files)
+    medium_batch: 4000     # Medium batches (≤6 files)
+    large_batch: 3000      # Large batches (>6 files)
+
+  # Refinement token allocation
+  refinement_tokens:
+    simple: 8000           # ≤2 failures
+    moderate: 12000        # ≤5 failures
+    complex: 16000         # >5 failures
+
+# XML and content formatting
+formatting:
+  # XML element markers for focused testing
+  test_marker_template: |
+    # TODO: Generate test for {element_type} {element_name} at line {line_number}
+
+  # File element template for XML
+  file_element_attributes:
+    filename: "{basename}"
+    filepath: "{relative_path}"

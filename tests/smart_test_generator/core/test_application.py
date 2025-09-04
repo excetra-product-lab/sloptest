@@ -5,6 +5,7 @@ from smart_test_generator.core.application import SmartTestGeneratorApp
 from smart_test_generator.config import Config
 from smart_test_generator.utils.user_feedback import UserFeedback
 from smart_test_generator.exceptions import SmartTestGeneratorError
+from smart_test_generator.models.data_models import TestGenerationPlan, TestableElement
 
 
 class TestSmartTestGeneratorApp:
@@ -86,7 +87,13 @@ class TestSmartTestGeneratorApp:
         files_to_process = [Path("file1.py")]
         reasons = {"file1.py": "No test file found"}
         coverage_data = {"file1.py": 0.5}
-        test_plans = [{"file": "file1.py", "elements": ["function1"]}]
+        test_plans = [TestGenerationPlan(
+            source_file="file1.py",
+            existing_test_files=[],
+            elements_to_test=[TestableElement("function1", "function", "file1.py", 10, "def function1():")],
+            coverage_before=None,
+            estimated_coverage_after=80.0
+        )]
         quality_reports = [{"file": "test_file1.py", "quality": "good"}]
         analysis_report = "Analysis Report"
         quality_gaps_report = "Quality Gaps Report"
@@ -100,15 +107,13 @@ class TestSmartTestGeneratorApp:
         
         result = app.run_analysis_mode(force=True)
         
-        assert result == "Analysis Report\n\nQuality Gaps Report"
+        assert result == "Analysis complete: 1 files need tests, 1 elements to test"
         app.analysis_service.find_python_files.assert_called_once()
         app.analysis_service.analyze_files_for_generation.assert_called_once_with(all_files, True)
         app.analysis_service.create_test_plans.assert_called_once_with(files_to_process, coverage_data)
         app.analysis_service.analyze_test_quality.assert_called_once_with(test_plans)
-        app.analysis_service.generate_analysis_report.assert_called_once_with(
-            all_files, files_to_process, test_plans, reasons
-        )
-        app.analysis_service.generate_quality_gaps_report.assert_called_once_with(quality_reports)
+        # Note: generate_analysis_report and generate_quality_gaps_report are no longer called
+        # in the new implementation - the analysis mode uses direct feedback display instead
     
     def test_run_analysis_mode_with_exception(self, app):
         """Test analysis mode handles exceptions properly."""
@@ -179,7 +184,13 @@ class TestSmartTestGeneratorApp:
         files_to_process = [Path("file1.py")]
         generation_reasons = {"file1.py": "No test file found"}
         coverage_data = {"file1.py": 0.5}
-        test_plans = [{"file": "file1.py", "elements": ["function1"]}]
+        test_plans = [TestGenerationPlan(
+            source_file="file1.py",
+            existing_test_files=[],
+            elements_to_test=[TestableElement("function1", "function", "file1.py", 10, "def function1():")],
+            coverage_before=None,
+            estimated_coverage_after=80.0
+        )]
         analysis_report = "Analysis Report"
         directory_structure = "Directory Structure"
         generated_tests = [{"file": "test_file1.py", "content": "test content"}]
@@ -203,13 +214,17 @@ class TestSmartTestGeneratorApp:
         mock_llm_factory.create_client.assert_called_once_with(
             claude_api_key='test-key',
             claude_model='claude-3-5-sonnet-20241022',
+            claude_extended_thinking=False,
+            claude_thinking_budget=None,
             azure_endpoint=None,
             azure_api_key=None,
             azure_deployment=None,
             bedrock_role_arn=None,
             bedrock_inference_profile=None,
             bedrock_region=None,
-            feedback=app.feedback
+            feedback=app.feedback,
+            cost_manager=mock_llm_factory.create_client.call_args[1]['cost_manager'],
+            config=app.config
         )
         
         # Verify test generation flow
@@ -279,7 +294,22 @@ class TestSmartTestGeneratorApp:
         files_to_process = [Path("file1.py")]
         generation_reasons = {"file1.py": "No test file found"}
         coverage_data = {"file1.py": 0.5}
-        test_plans = [{"file": "file1.py", "elements": ["function1"]}, {"file": "file2.py", "elements": ["function2"]}]
+        test_plans = [
+            TestGenerationPlan(
+                source_file="file1.py",
+                existing_test_files=[],
+                elements_to_test=[TestableElement("function1", "function", "file1.py", 10, "def function1():")],
+                coverage_before=None,
+                estimated_coverage_after=80.0
+            ),
+            TestGenerationPlan(
+                source_file="file2.py",
+                existing_test_files=[],
+                elements_to_test=[TestableElement("function2", "function", "file2.py", 20, "def function2():")],
+                coverage_before=None,
+                estimated_coverage_after=75.0
+            )
+        ]
         analysis_report = "Analysis Report"
         
         app.analysis_service.find_python_files.return_value = all_files
@@ -290,7 +320,8 @@ class TestSmartTestGeneratorApp:
         result = app.run_generate_mode(llm_credentials, dry_run=True)
         
         assert result == "Dry run - would generate tests for 2 files."
-        app.feedback.info.assert_called_with(analysis_report)
+        # In dry run mode, analysis report is not displayed, instead we see scanning message
+        app.feedback.info.assert_any_call("Scanning for Python files")
     
     @patch('smart_test_generator.core.application.LLMClientFactory')
     def test_run_generate_mode_with_azure_credentials(self, mock_llm_factory, app):
@@ -312,13 +343,17 @@ class TestSmartTestGeneratorApp:
         mock_llm_factory.create_client.assert_called_once_with(
             claude_api_key=None,
             claude_model='claude-3-5-sonnet-20241022',
+            claude_extended_thinking=False,
+            claude_thinking_budget=None,
             azure_endpoint='https://test.openai.azure.com',
             azure_api_key='azure-key',
             azure_deployment='gpt-4',
             bedrock_role_arn=None,
             bedrock_inference_profile=None,
             bedrock_region=None,
-            feedback=app.feedback
+            feedback=app.feedback,
+            cost_manager=mock_llm_factory.create_client.call_args[1]['cost_manager'],
+            config=app.config
         )
     
     @patch('smart_test_generator.core.application.LLMClientFactory')
@@ -369,7 +404,13 @@ class TestSmartTestGeneratorApp:
             files_to_process = [Path("file1.py")]
             generation_reasons = {"file1.py": "No test file found"}
             coverage_data = {"file1.py": 0.5}
-            test_plans = [{"file": "file1.py", "elements": ["function1"]}]
+            test_plans = [TestGenerationPlan(
+                source_file="file1.py",
+                existing_test_files=[],
+                elements_to_test=[TestableElement("function1", "function", "file1.py", 10, "def function1():")],
+                coverage_before=None,
+                estimated_coverage_after=80.0
+            )]
             
             app.analysis_service.find_python_files.return_value = all_files
             app.analysis_service.analyze_files_for_generation.return_value = (files_to_process, generation_reasons, coverage_data)

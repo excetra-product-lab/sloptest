@@ -20,6 +20,9 @@ from smart_test_generator.models.data_models import (
 
 logger = logging.getLogger(__name__)
 
+# Modern Python mutators are imported later to avoid circular imports
+MODERN_MUTATORS_AVAILABLE = True  # We'll try to import them when needed
+
 
 class SafeFS:
     """Guarded file operations scoped to a sandbox root.
@@ -483,16 +486,64 @@ class BoundaryValueMutator(MutationOperator):
 class MutationTestingEngine:
     """Main engine for mutation testing."""
     
-    def __init__(self, operators: Optional[List[MutationOperator]] = None, timeout: int = 30):
-        """Initialize mutation testing engine."""
-        self.operators = operators or [
+    def __init__(self, operators: Optional[List[MutationOperator]] = None, timeout: int = 30, 
+                 environment_service=None, config=None):
+        """Initialize mutation testing engine.
+        
+        Args:
+            operators: List of mutation operators to use
+            timeout: Timeout for test execution in seconds
+            environment_service: EnvironmentService for environment-aware execution
+            config: Configuration object for environment settings
+        """
+        # Base mutation operators
+        base_operators = [
             ArithmeticOperatorMutator(),
             ComparisonOperatorMutator(),
             LogicalOperatorMutator(),
             ConstantValueMutator(),
             BoundaryValueMutator()
         ]
+        
+        # Add modern Python mutators if available and enabled in config
+        modern_operators = self._get_modern_mutators(config)
+        base_operators.extend(modern_operators)
+        
+        self.operators = operators or base_operators
         self.timeout = timeout
+        self.environment_service = environment_service
+        self.config = config
+    
+    def _get_modern_mutators(self, config=None):
+        """Get modern Python mutators using late import to avoid circular imports."""
+        modern_operators = []
+        
+        try:
+            # Import modern mutators here to avoid circular imports
+            from smart_test_generator.analysis.type_hint_mutator import TypeHintMutator
+            from smart_test_generator.analysis.async_await_mutator import AsyncAwaitMutator
+            from smart_test_generator.analysis.dataclass_mutator import DataclassMutator
+            
+            if config:
+                modern_mutators_config = config.get('quality', {}).get('modern_mutators', {})
+                
+                if modern_mutators_config.get('enable_type_hints', True):
+                    modern_operators.append(TypeHintMutator())
+                if modern_mutators_config.get('enable_async_await', True):
+                    modern_operators.append(AsyncAwaitMutator())
+                if modern_mutators_config.get('enable_dataclass', True):
+                    modern_operators.append(DataclassMutator())
+            else:
+                # If no config provided, enable all modern mutators by default
+                modern_operators = [
+                    TypeHintMutator(),
+                    AsyncAwaitMutator(),
+                    DataclassMutator()
+                ]
+        except ImportError as e:
+            logger.warning(f"Modern Python mutators not available: {e}")
+            
+        return modern_operators
     
     def generate_mutants(self, source_file: str) -> List[Mutant]:
         """Generate all possible mutants for a source file."""
@@ -500,9 +551,21 @@ class MutationTestingEngine:
             with open(source_file, 'r', encoding='utf-8') as f:
                 source_code = f.read()
             
+            return self.generate_mutants_from_code(source_code, source_file)
+        except FileNotFoundError:
+            logger.error(f"Source file not found: {source_file}")
+            return []
+        except Exception as e:
+            logger.error(f"Failed to generate mutants for {source_file}: {e}")
+            return []
+    
+    def generate_mutants_from_code(self, source_code: str, filepath: str) -> List[Mutant]:
+        """Generate all possible mutants for source code."""
+        try:
+            
             all_mutants = []
             for operator in self.operators:
-                mutants = operator.generate_mutants(source_code, source_file)
+                mutants = operator.generate_mutants(source_code, filepath)
                 all_mutants.extend(mutants)
             
             # Remove duplicates and sort by line number
@@ -510,7 +573,7 @@ class MutationTestingEngine:
             return sorted(unique_mutants, key=lambda m: (m.line_number, m.column_start))
             
         except Exception as e:
-            logger.error(f"Failed to generate mutants for {source_file}: {e}")
+            logger.error(f"Failed to generate mutants for {filepath}: {e}")
             return []
     
     def run_mutation_testing(self, source_file: str, test_files: List[str], 
@@ -657,14 +720,15 @@ class MutationTestingEngine:
                         # If a test path is outside common_root, run by name from cwd
                         sandbox_tests.append(str(tp.name))
 
-                # Run tests inside sandbox
-                cmd = ['python', '-m', 'pytest'] + sandbox_tests + ['--tb=short', '-q']
+                # Run tests inside sandbox using environment-aware commands
+                cmd = self._build_test_command(sandbox_tests, sandbox_project_root)
                 result = subprocess.run(
                     cmd,
                     capture_output=True,
                     text=True,
                     timeout=self.timeout,
-                    cwd=str(sandbox_project_root)
+                    cwd=str(sandbox_project_root),
+                    env=self._get_test_environment()
                 )
 
                 killed = result.returncode != 0
@@ -688,6 +752,73 @@ class MutationTestingEngine:
         failing_tests.extend(matches)
         
         return failing_tests
+    
+    def _build_test_command(self, test_files: List[str], working_directory: Path) -> List[str]:
+        """Build environment-aware test command.
+        
+        Args:
+            test_files: List of test files to run
+            working_directory: Working directory for the command
+            
+        Returns:
+            Command as list of strings
+        """
+        # Get environment info if service is available and auto_detect is enabled
+        env_info = None
+        if (self.environment_service is not None and self.config and 
+            self.config.get('environment.auto_detect', True)):
+            try:
+                env_info = self.environment_service.detect_current_environment()
+            except Exception:
+                # Fallback to default behavior if environment detection fails
+                pass
+        
+        # Base pytest args for mutation testing (minimal output for performance)
+        base_args = ['--tb=short', '-q', '--no-header']
+        
+        # Build environment-aware command
+        if env_info and self.config:
+            
+            if (env_info.manager.value == "poetry" and 
+                self.config.get('environment.overrides.poetry.use_poetry_run', True)):
+                return ['poetry', 'run', 'pytest'] + test_files + base_args
+            elif (env_info.manager.value == "pipenv" and 
+                  self.config.get('environment.overrides.pipenv.use_pipenv_run', True)):
+                return ['pipenv', 'run', 'pytest'] + test_files + base_args
+            elif env_info.python_executable:
+                # For other environment managers, use their Python executable
+                return [env_info.python_executable, '-m', 'pytest'] + test_files + base_args
+        
+        # Fallback to default Python
+        return ['python', '-m', 'pytest'] + test_files + base_args
+    
+    def _get_test_environment(self) -> Optional[Dict[str, str]]:
+        """Get environment variables for test execution.
+        
+        Returns:
+            Dictionary of environment variables or None to use default
+        """
+        if self.config and self.config.get('test_generation.coverage.env.propagate', True):
+            # Start with current environment
+            env = dict(os.environ)
+            
+            # Add extra environment variables if configured
+            extra_env = self.config.get('test_generation.coverage.env.extra', {}) or {}
+            for key, value in extra_env.items():
+                env[str(key)] = str(value)
+            
+            # Handle PYTHONPATH modifications
+            append_paths = self.config.get('test_generation.coverage.env.append_pythonpath', []) or []
+            if append_paths:
+                existing = env.get('PYTHONPATH', '')
+                paths = [p for p in (existing.split(os.pathsep) if existing else []) if p]
+                paths.extend(str(Path(p)) for p in append_paths)
+                env['PYTHONPATH'] = os.pathsep.join(paths)
+            
+            return env
+        
+        # Return None to use subprocess default (inherit environment)
+        return None
     
     def _calculate_mutation_score(self, source_file: str, test_files: List[str], 
                                  results: List[MutationResult], start_time: float) -> MutationScore:

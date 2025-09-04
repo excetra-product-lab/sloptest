@@ -7,6 +7,8 @@ Key properties
 - Incremental: generates only untested functions/methods
 - Safe writers: append or AST-merge into tests/ with optional Black formatting
 - Optional post-run + LLM refinement loop to fix failing tests
+- Modern Python mutation testing: type hints, async/await, and dataclass patterns
+- Quality analysis with comprehensive test strength evaluation
 
 Install (with uv)
 ```bash

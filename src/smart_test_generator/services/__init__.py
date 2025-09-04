@@ -5,11 +5,18 @@ from .coverage_service import CoverageService
 from .analysis_service import AnalysisService
 from .quality_service import QualityAnalysisService
 from .base_service import BaseService
+from .environment_service import EnvironmentService, EnvironmentInfo, EnvironmentManager
+from .dependency_service import DependencyService, DependencyInfo
 
 __all__ = [
     'BaseService',
     'TestGenerationService',
     'CoverageService', 
     'AnalysisService',
-    'QualityAnalysisService'
+    'QualityAnalysisService',
+    'EnvironmentService',
+    'EnvironmentInfo',
+    'EnvironmentManager',
+    'DependencyService',
+    'DependencyInfo'
 ] 

@@ -1,0 +1,125 @@
+# Refinement prompts for fixing failing tests
+# These prompts are used when refining tests based on failure information
+
+refinement:
+  # Base system prompt for test refinement
+  system_prompt_base: |
+    Analyze test failures and provide targeted fixes that maintain test quality and coverage.
+
+  # Extended thinking addition for refinement
+  extended_thinking_addon: |
+
+    EXTENDED THINKING MODE:
+    Analyze test failures and design targeted fixes:
+    - Examine failure patterns and root causes
+    - Consider interaction effects and dependencies
+    - Plan systematic fixes addressing symptoms and underlying issues
+    - Design solutions preventing similar failures
+    - Evaluate potential side effects and edge cases
+
+    Analyze test failures and provide targeted fixes that maintain test quality and coverage.
+
+  # Enhanced user content template with git and pattern context
+  user_content_template: |
+    # Test Refinement Request
+
+    {prompt}
+
+    ## Context
+    - Run ID: {run_id}
+    - Project: {branch} (commit: {commit})
+    - Environment: {python_version} on {platform}
+    {git_context_summary}
+
+    ## Test Generation Summary
+    - Tests written: {tests_written_count} files
+    - Last command: {last_run_command}
+    - Total failures: {failures_total}
+    {pattern_analysis_summary}
+
+  # Git context summary template
+  git_context_summary_template: |
+
+    ## Recent Changes Context
+    {recent_changes_summary}
+    {test_changes_detail}
+    {relevant_changes}
+
+  # Pattern analysis summary template  
+  pattern_analysis_summary_template: |
+
+    ## Failure Pattern Analysis
+    - **Failure Categories**: {failure_categories}
+    - **Trending Issues**: {trending_patterns}
+    - **Top Fix Suggestions**:
+    {fix_suggestions_list}
+    {historical_success_context}
+
+  # Git changes summary formats
+  recent_changes_formats:
+    basic: "- {total_files_changed} files changed in the last {time_range}"
+    detailed: |
+      - **Time Range**: {time_range}  
+      - **Files Changed**: {total_files_changed} total ({test_files_changed} test files, {source_files_changed} source files)
+      - **Recent Commits**: {recent_commit_messages}
+
+  # Pattern analysis formats
+  pattern_formats:
+    categories_list: "{categories_with_counts}"
+    trending_simple: "{trending_categories}"
+    fix_suggestions_format: |
+      {priority}. **{title}** ({category})
+         {description}
+         {code_example}
+
+  # Historical context formats
+  historical_formats:
+    success_rates: "Historical success rates: {success_rates_summary}"
+    confidence_context: "Average confidence in failure categorization: {confidence}%"
+
+# Advanced refinement prompts (from payload_builder.py)
+advanced_refinement:
+  # Base instruction for advanced refinement
+  base_instruction: |
+    Refine failing tests to make the suite pass without weakening test quality.
+
+  # Decisive recommendation addition
+  decisive_addon: |
+    Provide a single, decisive plan and concrete updated test files.
+
+  # Step-by-step encouragement
+  step_by_step_addon: |
+    Think step-by-step: analyze failures, propose minimal fixes, update tests, and re-run mentally.
+
+  # Positive/negative examples
+  examples_addon: |
+    Follow ✓/✗ patterns: ✓ correct, minimal changes; ✗ suppressing assertions or masking failures.
+
+  # Framework and constraints template
+  framework_constraints_template: |
+    Testing framework: {framework}
+    Constraints:
+    - Do not modify production source files.
+    - Keep tests readable and consistent with existing style.
+    - Preserve coverage where possible; prefer precise assertions.
+
+  # Failure summary template
+  failure_summary_template: |
+    Failures (top):
+    {failure_list}
+
+  # Output format instruction
+  output_format: |
+    Return JSON in this exact format:
+    {
+      "updated_files": [
+        {
+          "path": "<test_file_path>", 
+          "content": "<complete_file_content>"
+        }
+      ],
+      "rationale": "<brief_explanation_of_changes>",
+      "plan": "<summary_of_fix_strategy>"
+    }
+    
+    Do not include prose outside JSON.

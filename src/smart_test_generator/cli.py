@@ -74,7 +74,7 @@ def setup_argparse() -> argparse.ArgumentParser:
         "mode",
         nargs='?',
         default='generate',
-        choices=['generate', 'analyze', 'coverage', 'status', 'init-config', 'cost', 'debug-state', 'sync-state', 'reset-state'],
+        choices=['generate', 'analyze', 'coverage', 'status', 'init-config', 'cost', 'debug-state', 'sync-state', 'reset-state', 'env'],
         help="Mode of operation"
     )
 
@@ -821,6 +821,99 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
         sys.exit(1)
 
 
+def handle_env_mode(args, feedback: UserFeedback):
+    """Handle environment information mode."""
+    try:
+        # Get project directory
+        project_dir = Path(args.directory).resolve()
+        if not project_dir.exists():
+            feedback.error(f"Directory does not exist: {project_dir}")
+            sys.exit(1)
+        
+        # Load minimal configuration
+        config_file = getattr(args, 'config', '.testgen.yml')
+        if project_dir != Path.cwd():
+            config_file = project_dir / config_file
+        config = Config(config_file)
+        
+        # Display comprehensive environment information
+        display_environment_info(project_dir, config, feedback)
+        
+        # Also show additional diagnostic information
+        feedback.divider()
+        feedback.info("System Information")
+        feedback.info(f"Operating System: {sys.platform}")
+        feedback.info(f"Python Implementation: {sys.implementation.name}")
+        feedback.info(f"Current Working Directory: {Path.cwd()}")
+        feedback.info(f"Project Directory: {project_dir}")
+        
+        # Show configuration file status
+        config_path = Path(config_file)
+        if config_path.exists():
+            feedback.success(f"Configuration File: {config_path} (found)")
+        else:
+            feedback.warning(f"Configuration File: {config_path} (not found, using defaults)")
+            
+    except Exception as e:
+        feedback.error(f"Failed to analyze environment: {e}")
+        if feedback.verbose:
+            feedback.error("Full traceback:", details=traceback.format_exc())
+        sys.exit(1)
+
+
+def display_environment_info(project_dir: Path, config: Config, feedback: UserFeedback):
+    """Display environment information in verbose mode."""
+    try:
+        from smart_test_generator.services.environment_service import EnvironmentService
+        from smart_test_generator.services.dependency_service import DependencyService
+        
+        feedback.divider()
+        feedback.info("Environment Information")
+        
+        # Environment detection
+        env_service = EnvironmentService(project_dir, config, feedback)
+        env_info = env_service.detect_current_environment()
+        
+        feedback.info(f"Environment Manager: {env_info.manager.value}")
+        feedback.info(f"Python Version: {env_info.python_version}")
+        feedback.info(f"Python Executable: {env_info.python_executable}")
+        
+        if env_info.is_virtual_env:
+            feedback.success(f"Virtual Environment: Active ({env_info.virtual_env_path or 'detected'})")
+        else:
+            feedback.warning("Virtual Environment: Not detected")
+        
+        if env_info.project_file:
+            feedback.info(f"Project File: {env_info.project_file}")
+        if env_info.lockfile:
+            feedback.info(f"Lock File: {env_info.lockfile}")
+        
+        # Dependency validation
+        dep_service = DependencyService(project_dir, config, feedback)
+        missing_deps = dep_service.check_missing_deps(["pytest", "pytest-cov"])
+        conflicts = dep_service.check_conflicts()
+        
+        if not missing_deps and not conflicts:
+            feedback.success("Dependencies: All required packages available")
+        else:
+            if missing_deps:
+                feedback.warning(f"Missing Dependencies: {', '.join(missing_deps)}")
+            if conflicts:
+                feedback.warning(f"Dependency Conflicts: {len(conflicts)} found")
+        
+        # Environment recommendations
+        recommendations = env_service.get_current_env_recommendations()
+        if recommendations:
+            feedback.info("Recommendations:")
+            for rec in recommendations:
+                feedback.info(f"  • {rec}")
+        
+        feedback.divider()
+        
+    except Exception as e:
+        feedback.debug(f"Failed to display environment info: {e}")
+
+
 def main():
     """Main execution function with enhanced UI."""
     feedback = None
@@ -844,6 +937,11 @@ def main():
             handle_init_config_mode(args, feedback)
             return
         
+        # Handle env mode early (minimal setup needed)
+        if args.mode == 'env':
+            handle_env_mode(args, feedback)
+            return
+        
         # Validate system and project
         specified_dir, project_dir = validate_system_and_project(args, feedback)
         
@@ -863,6 +961,10 @@ def main():
                 sys.exit(1)
         
         feedback.success("Application ready!")
+        
+        # Show environment information in verbose mode
+        if args.verbose:
+            display_environment_info(project_dir, config, feedback)
         
         # Execute the requested mode
         execute_mode_with_status(app, args, feedback)

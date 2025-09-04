@@ -68,27 +68,178 @@ def parse_junit_xml(junit_path: Path) -> ParsedFailures:
 
 
 def parse_stdout_stderr(stdout: str, stderr: str) -> ParsedFailures:
+    """
+    Parse pytest stdout/stderr output to extract test failures.
+    
+    Handles multiple output formats:
+    1. Main test run format: "path::test FAILED/ERROR"
+    2. Short summary format: "FAILED/ERROR path::test - message"
+    3. Line format: "path:line: ErrorType: message"
+    
+    Args:
+        stdout: Standard output from pytest run
+        stderr: Standard error from pytest run
+        
+    Returns:
+        ParsedFailures object containing detected failures
+    """
+    if not stdout and not stderr:
+        return ParsedFailures(total=0, failures=[])
+        
     text = stdout + "\n" + stderr
     failures: List[FailureRecord] = []
-    # Very lightweight heuristic: lines like path::testname FAILED and capture assertion blocks
-    for match in re.finditer(r"^(?P<path>[^\s:]+\.py(::[\w\[\]':]+)+)\s+FAILED", text, re.MULTILINE):
-        nodeid = match.group('path')
-        file_path = nodeid.split('::')[0]
-        # Try to capture a small assertion context following this line
-        start = match.end()
-        snippet = text[start:start + 500]
-        failures.append(
-            FailureRecord(
-                nodeid=nodeid,
-                file=file_path,
-                line=None,
-                message="Test failed",
-                assertion_diff=_extract_assertion_diff(snippet),
-                captured_stdout=None,
-                captured_stderr=None,
-                duration=None,
+    seen_nodeids = set()  # Prevent duplicates
+    
+    try:
+        # Pattern 0: Parallel execution format (pytest-xdist) - [gwN] prefix
+        parallel_pattern = r"^\[gw\d+\]\s+(?P<status>FAILED|ERROR)\s+(?P<path>[^\s]+\.py(?:::[\w\[\]:,\-\.\{\}\"'\/\?=]*)*)"
+        for match in re.finditer(parallel_pattern, text, re.MULTILINE):
+            nodeid = match.group('path')
+            if nodeid in seen_nodeids:
+                continue
+            seen_nodeids.add(nodeid)
+            
+            file_path = nodeid.split('::')[0]
+            status = match.group('status')
+            
+            failures.append(
+                FailureRecord(
+                    nodeid=nodeid,
+                    file=file_path,
+                    line=None,
+                    message=f"Test {status.lower()} (parallel execution)",
+                    assertion_diff=None,
+                    captured_stdout=None,
+                    captured_stderr=None,
+                    duration=None,
+                )
             )
-        )
+        
+        # Pattern 1: Main test run output (path::test FAILED/ERROR)
+        # Enhanced regex for complex parametrized tests with JSON, URLs, special chars
+        main_pattern = r"^(?P<path>[^\s]+\.py(?:::[\w\[\]:,\-\.\{\}\"'\/\?=]*)*)\s+(?P<status>FAILED|ERROR)"
+        for match in re.finditer(main_pattern, text, re.MULTILINE):
+            nodeid = match.group('path')
+            if nodeid in seen_nodeids:
+                continue
+            seen_nodeids.add(nodeid)
+            
+            file_path = nodeid.split('::')[0]
+            status = match.group('status')
+            
+            # Try to capture assertion context following this line
+            start = match.end()
+            snippet = text[start:start + 500]
+            
+            failures.append(
+                FailureRecord(
+                    nodeid=nodeid,
+                    file=file_path,
+                    line=None,
+                    message=f"Test {status.lower()}",
+                    assertion_diff=_extract_assertion_diff(snippet),
+                    captured_stdout=None,
+                    captured_stderr=None,
+                    duration=None,
+                )
+            )
+        
+        # Pattern 2: Short summary format (FAILED/ERROR path::test [- message])
+        # Enhanced for complex parametrized tests and optional messages
+        summary_pattern = r"^(?P<status>FAILED|ERROR)\s+(?P<path>[^\s]+\.py(?:::[\w\[\]:,\-\.\{\}\"'\/\?=]*)*)(?:\s+-\s+(?P<message>.*))?"
+        for match in re.finditer(summary_pattern, text, re.MULTILINE):
+            nodeid = match.group('path')
+            if nodeid in seen_nodeids:
+                # Update existing failure with better message if available
+                message_group = match.group('message')
+                if message_group:
+                    for failure in failures:
+                        if failure.nodeid == nodeid:
+                            failure.message = message_group.strip()
+                            break
+                continue
+            seen_nodeids.add(nodeid)
+            
+            file_path = nodeid.split('::')[0]
+            message_group = match.group('message')
+            message = message_group.strip() if message_group else f"Test {match.group('status').lower()}"
+            
+            failures.append(
+                FailureRecord(
+                    nodeid=nodeid,
+                    file=file_path,
+                    line=None,
+                    message=message,
+                    assertion_diff=_extract_assertion_diff(message),
+                    captured_stdout=None,
+                    captured_stderr=None,
+                    duration=None,
+                )
+            )
+        
+        # Pattern 3: Line format output (path:line: error_type: message)
+        line_pattern = r"^(?P<path>[^\s]+\.py):(?P<line>\d+):\s+(?P<error_type>\w+Error|AssertionError):\s+(?P<message>.*)"
+        for match in re.finditer(line_pattern, text, re.MULTILINE):
+            file_path = match.group('path')
+            line_num = int(match.group('line'))
+            error_type = match.group('error_type')
+            message = match.group('message').strip()
+            
+            # Create a synthetic nodeid for line-format failures
+            nodeid = f"{file_path}::line_{line_num}"
+            if nodeid in seen_nodeids:
+                continue
+            seen_nodeids.add(nodeid)
+            
+            failures.append(
+                FailureRecord(
+                    nodeid=nodeid,
+                    file=file_path,
+                    line=line_num,
+                    message=f"{error_type}: {message}",
+                    assertion_diff=_extract_assertion_diff(message),
+                    captured_stdout=None,
+                    captured_stderr=None,
+                    duration=None,
+                )
+            )
+        
+        # Pattern 4: Collection errors - handle these carefully
+        # These are import/syntax errors that prevent test collection, not actual test failures
+        # Format: "ERROR tests/file.py - ImportError: message"
+        collection_pattern = r"^(?P<status>ERROR)\s+(?P<path>[^\s]+\.py)\s+-\s+(?P<message>(?:ImportError|SyntaxError|ModuleNotFoundError).*)"
+        for match in re.finditer(collection_pattern, text, re.MULTILINE):
+            file_path = match.group('path')
+            message = match.group('message').strip()
+            
+            # Use file path as nodeid for collection errors
+            nodeid = f"{file_path}::collection_error"
+            if nodeid in seen_nodeids:
+                continue
+            seen_nodeids.add(nodeid)
+            
+            # Collection errors are different from test failures - they prevent tests from running
+            # Mark them clearly so refinement can handle them differently
+            failures.append(
+                FailureRecord(
+                    nodeid=nodeid,
+                    file=file_path,
+                    line=None,
+                    message=f"Collection error: {message}",
+                    assertion_diff=None,
+                    captured_stdout=None,
+                    captured_stderr=None,
+                    duration=None,
+                )
+            )
+    
+    except Exception as e:
+        # If parsing fails, return what we have so far
+        # Log the error but don't crash the whole process
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(f"Error parsing pytest output: {e}")
+    
     return ParsedFailures(total=len(failures), failures=failures)
 
 

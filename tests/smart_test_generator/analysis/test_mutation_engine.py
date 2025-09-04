@@ -349,7 +349,7 @@ class TestMutationTestingEngine:
         """Test __init__ creates engine with default operators."""
         engine = MutationTestingEngine()
         
-        assert len(engine.operators) == 5
+        assert len(engine.operators) == 8
         assert engine.timeout == 30
         assert any(isinstance(op, ArithmeticOperatorMutator) for op in engine.operators)
         assert any(isinstance(op, ComparisonOperatorMutator) for op in engine.operators)

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from smart_test_generator.config import Config
 from smart_test_generator.utils.user_feedback import UserFeedback
+from smart_test_generator.utils.cost_manager import CostManager
 from smart_test_generator.services import TestGenerationService, CoverageService, AnalysisService
 from smart_test_generator.core.llm_factory import LLMClientFactory
 from smart_test_generator.exceptions import SmartTestGeneratorError
@@ -59,11 +60,9 @@ class SmartTestGeneratorApp:
             # Analyze test quality for existing tests
             quality_reports = self.analysis_service.analyze_test_quality(test_plans)
             
-            # Generate quality gaps report if there are quality issues
+            # Display beautiful quality analysis results
             if quality_reports:
-                quality_gaps_report = self.analysis_service.generate_quality_gaps_report(quality_reports)
-                if "No significant quality gaps" not in quality_gaps_report:
-                    self.feedback.info("\n" + quality_gaps_report)
+                self.feedback.quality_analysis_display(quality_reports, self.project_root)
             
             # Return a summary for compatibility
             total_elements = sum(len(plan.elements_to_test) for plan in test_plans)
@@ -111,6 +110,9 @@ class SmartTestGeneratorApp:
             # Always sync state with existing tests first
             self._ensure_state_synced()
             
+            # Create cost manager for tracking LLM usage
+            cost_manager = CostManager(self.config)
+            
             # Create LLM client
             self.feedback.info("Initializing LLM client")
             llm_client = LLMClientFactory.create_client(
@@ -124,7 +126,9 @@ class SmartTestGeneratorApp:
                 bedrock_role_arn=llm_credentials.get('bedrock_role_arn'),
                 bedrock_inference_profile=llm_credentials.get('bedrock_inference_profile'),
                 bedrock_region=llm_credentials.get('bedrock_region'),
-                feedback=self.feedback
+                feedback=self.feedback,
+                cost_manager=cost_manager,
+                config=self.config
             )
             
             # Find all Python files
@@ -186,6 +190,9 @@ class SmartTestGeneratorApp:
                 "Improvement": f"+{coverage_improvement.get('improvement', 0):.1f}%"
             })
             
+            # Show cost statistics after generation
+            self._show_cost_statistics(cost_manager)
+            
             return final_report
             
         except Exception as e:
@@ -223,4 +230,33 @@ class SmartTestGeneratorApp:
             return f"Sample configuration created at {config_file}"
         except Exception as e:
             self.feedback.error(f"Failed to create configuration: {e}")
-            raise 
+            raise
+    
+    def _show_cost_statistics(self, cost_manager: CostManager) -> None:
+        """Display cost statistics after test generation."""
+        try:
+            # Get usage summary for this session (current day)
+            usage_summary = cost_manager.get_usage_summary(days=1)
+            
+            if usage_summary.get('requests', 0) > 0:
+                # Show cost statistics with nice formatting
+                cost_info = {
+                    "Session Cost": f"${usage_summary['total_cost']:.4f}",
+                    "API Requests": str(usage_summary['requests']),
+                    "Total Tokens": f"{usage_summary['total_tokens']:,}",
+                    "Avg Cost/Request": f"${usage_summary['average_cost_per_request']:.4f}"
+                }
+                
+                self.feedback.summary_panel("💰 Cost Statistics", cost_info, "yellow")
+                
+                # Show optimization tips if cost is significant
+                if usage_summary['total_cost'] > 0.50:  # More than 50 cents
+                    self.feedback.info("💡 Cost Optimization Tips:")
+                    self.feedback.info("• Use smaller batch sizes: --batch-size 5")
+                    self.feedback.info("• Try streaming mode: --streaming") 
+                    self.feedback.info("• Use cheaper models for simple files: --claude-model claude-3-5-haiku-20241022")
+            else:
+                self.feedback.debug("No cost data available for this session")
+                
+        except Exception as e:
+            self.feedback.debug(f"Could not display cost statistics: {e}") 

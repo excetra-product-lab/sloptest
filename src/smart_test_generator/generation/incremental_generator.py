@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 from smart_test_generator.models.data_models import TestGenerationPlan
 from smart_test_generator.generation.llm_clients import LLMClient, get_system_prompt
 from smart_test_generator.config import Config
+from smart_test_generator.utils.prompt_loader import get_prompt_loader
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +93,10 @@ class IncrementalLLMClient:
         
         return None
 
+    def refine_tests(self, request: Dict) -> str:
+        """Delegate test refinement to the underlying base client."""
+        return self.base_client.refine_tests(request)
+
     def _read_existing_tests(self, test_files: List[str]) -> str:
         """Read existing test files for context."""
         content = []
@@ -106,108 +111,37 @@ class IncrementalLLMClient:
     def _create_contextual_prompt(self, plan: TestGenerationPlan, existing_tests: str) -> str:
         """Create a prompt that includes context about existing tests and quality insights."""
         base_prompt = get_system_prompt(self.config)
-
+        prompt_loader = get_prompt_loader()
+        
         # Focus on specific untested elements only
         untested_elements = [f"{e.type} {e.name}" for e in plan.elements_to_test]
         
         # Check if we should use 2025 guidelines for context formatting
         use_2025_guidelines = self.config.get('prompt_engineering.use_2025_guidelines', True)
         
-        if use_2025_guidelines:
-            context = f"""\n\nCONTEXT - INCREMENTAL TESTING:
-Generate tests ONLY for these untested elements: {', '.join(untested_elements)}
-
-Existing test style (match this):
-{existing_tests[:800]}...
-
-Do not regenerate existing tests. Focus exclusively on the listed elements."""
-        else:
-            # Legacy format with more verbose XML-style structure
-            context = f"""\n\nIMPORTANT CONTEXT:
-This file already has some tests. You should ONLY generate tests for the following untested elements:
-
-{', '.join(untested_elements)}
-
-The existing test file(s) use the following patterns and style:
-{existing_tests[:1000]}...
-
-Please match the existing testing style and patterns. Only generate tests for the elements listed above.
-Do not regenerate tests for elements that are already tested."""
-
-        # Add targeted quality guidance (more concise)
-        quality_guidance = self._generate_quality_guidance(plan)
-        if quality_guidance:
-            context += f"\n\n{quality_guidance}"
-
-        # Add focused mutation insights
-        mutation_guidance = self._generate_mutation_guidance(plan)
-        if mutation_guidance:
-            context += f"\n\n{mutation_guidance}"
-
-        return base_prompt + context
-
-    def _generate_quality_guidance(self, plan: TestGenerationPlan) -> str:
-        """Generate concise quality-focused guidance."""
-        if not hasattr(plan, 'quality_score_target') or not plan.quality_score_target:
-            return ""
+        # Build quality target if available
+        quality_target = getattr(plan, 'quality_score_target', None)
         
-        target = plan.quality_score_target
+        # Build mutation guidance data if available
+        mutation_guidance = None
+        if hasattr(plan, 'weak_mutation_spots') or hasattr(plan, 'mutation_score_target'):
+            mutation_guidance = {
+                'weak_mutation_spots': getattr(plan, 'weak_mutation_spots', []),
+                'mutation_score_target': getattr(plan, 'mutation_score_target', None)
+            }
         
-        if target >= 90:
-            return f"""QUALITY TARGET: {target:.0f}% (HIGH STANDARD)
-- Use exact assertions with specific expected values
-- Test all edge cases: None, empty collections, boundaries
-- Include comprehensive error condition testing
-- Ensure test independence with proper fixtures"""
-        
-        elif target >= 75:
-            return f"""QUALITY TARGET: {target:.0f}% (GOOD STANDARD)
-- Test success and error conditions
-- Include edge cases and boundary values
-- Use specific assertions over generic ones"""
-        
-        else:
-            return f"""QUALITY TARGET: {target:.0f}% (BASIC STANDARD)
-- Focus on common use cases and clear assertions
-- Include basic error condition testing"""
+        # Get contextual prompt from loader
+        return prompt_loader.get_contextual_prompt(
+            base_prompt=base_prompt,
+            untested_elements=untested_elements,
+            existing_tests=existing_tests,
+            use_2025_format=use_2025_guidelines,
+            quality_target=quality_target,
+            mutation_guidance=mutation_guidance,
+            config=self.config
+        )
 
-    def _generate_mutation_guidance(self, plan: TestGenerationPlan) -> str:
-        """Generate focused mutation testing guidance."""
-        if not hasattr(plan, 'weak_mutation_spots') or not plan.weak_mutation_spots:
-            return ""
-        
-        guidance = ["MUTATION TESTING - Address these weak patterns:"]
-        
-        # Group and limit to most important patterns
-        weak_spots_by_type = {}
-        for weak_spot in plan.weak_mutation_spots[:3]:  # Limit to top 3
-            mut_type = weak_spot.mutation_type.value
-            if mut_type not in weak_spots_by_type:
-                weak_spots_by_type[mut_type] = []
-            weak_spots_by_type[mut_type].append(weak_spot)
-        
-        for mut_type, spots in weak_spots_by_type.items():
-            type_name = mut_type.replace('_', ' ').title()
-            
-            if mut_type == "arithmetic_operator":
-                guidance.append(f"• {type_name}: Test exact arithmetic results, verify different operators fail")
-            elif mut_type == "comparison_operator":
-                guidance.append(f"• {type_name}: Test boundary conditions (equal, just above/below)")
-            elif mut_type == "logical_operator":
-                guidance.append(f"• {type_name}: Test both AND/OR branches with scenarios where logic matters")
-            elif mut_type == "constant_value":
-                guidance.append(f"• {type_name}: Use specific expected values, test boundary constants")
-            elif mut_type == "boundary_value":
-                guidance.append(f"• {type_name}: Add comprehensive off-by-one tests")
-            
-            # Add top suggestion if available
-            if spots and spots[0].suggested_tests:
-                guidance.append(f"  Suggestion: {spots[0].suggested_tests[0]}")
-        
-        if hasattr(plan, 'mutation_score_target') and plan.mutation_score_target:
-            guidance.append(f"\nTARGET MUTATION SCORE: {plan.mutation_score_target:.0f}%")
-        
-        return "\n".join(guidance)
+    # Quality and mutation guidance methods removed - now handled by PromptLoader
 
     def _create_focused_xml(self, plan: TestGenerationPlan) -> str:
         """Create XML content focused only on elements needing tests."""
