@@ -407,16 +407,16 @@ class TestValidateArguments:
         # Act
         args = parser.parse_args([
             'generate',
-            '--claude-extended-thinking',
+            '--claude-no-extended-thinking',
             '--claude-thinking-budget', '8192'
         ])
 
         # Assert
-        assert args.claude_extended_thinking is True
+        assert args.claude_extended_thinking is False
         assert args.claude_thinking_budget == 8192
 
-    def test_extended_thinking_defaults_to_false(self):
-        """Test that extended thinking defaults to False when not specified."""
+    def test_extended_thinking_defaults_to_true(self):
+        """Test that extended thinking defaults to True when not specified."""
         # Arrange
         parser = setup_argparse()
 
@@ -424,7 +424,7 @@ class TestValidateArguments:
         args = parser.parse_args(['generate'])
 
         # Assert
-        assert args.claude_extended_thinking is False
+        assert args.claude_extended_thinking is True
         assert args.claude_thinking_budget is None
 
     def test_extended_thinking_help_text(self):

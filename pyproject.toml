@@ -2,7 +2,7 @@
 name = "sloptest"
 version = "0.1.0"
 description = "Intelligently generates missing tests by analyzing existing coverage and test patterns"
-authors = [{ name = "Your Name", email = "your.email@example.com" }]
+authors = [{ name = "0xfauzi", email = "fauzi@0xfauzi.com" }]
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.9"

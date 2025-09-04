@@ -122,7 +122,8 @@ class Config:
                     'backoff_base_sec': 1.0,
                     'backoff_max_sec': 8.0,
                     'stop_on_no_change': True,
-                    'max_total_minutes': 5
+                    'max_total_minutes': 5,
+                    'strategy': 'auto'  # 'auto', 'comprehensive', 'balanced', 'dependency_focused', 'logic_focused', 'setup_focused'
                 }
             }
         },
@@ -341,6 +342,12 @@ test_generation:
       backoff_max_sec: 8.0          # Maximum delay between attempts
       stop_on_no_change: true       # Stop if LLM returns no changes
       max_total_minutes: 5          # Maximum total time for refinement
+      strategy: 'auto'              # Refinement strategy: 'auto' (detect based on failures),
+                                    # 'comprehensive' (thorough approach for complex issues),
+                                    # 'balanced' (general-purpose approach),
+                                    # 'dependency_focused' (for import/dependency errors),
+                                    # 'logic_focused' (for assertion/logic errors),
+                                    # 'setup_focused' (for fixture/mock errors)
       
       # Git diff integration settings
       git_context:

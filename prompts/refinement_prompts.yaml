@@ -13,28 +13,29 @@ refinement:
 
     1. **FAILURE ANALYSIS**: 
        - What exactly failed? Parse the error message carefully
-       - Is this a logic error, dependency issue, assertion problem, or environment issue?
-       - Are there patterns across multiple failures?
+       - Is this a mock/data mismatch, API signature issue, environment dependency, or logic error?
+       - Are there patterns across multiple failures indicating broader systemic issues?
 
     2. **ROOT CAUSE IDENTIFICATION**:
        - What is the underlying cause, not just the symptom?
-       - Has the source code changed in a way that makes the test assumption incorrect?
-       - Are there missing mocks, wrong imports, or configuration issues?
+       - Is this a test assumption that's become outdated, or a test setup issue?
+       - Does the production code expect different data types/structures than the test provides?
+       - Are there interface mismatches between mocks and real objects?
 
     3. **IMPACT ASSESSMENT**:
-       - Which components and test cases are affected?
+       - Which components and test cases are affected by similar patterns?
        - Could fixing this break other tests or introduce new issues?
-       - What's the minimal change needed to preserve test integrity?
+       - What's the minimal change needed to preserve test integrity and coverage?
 
     4. **SOLUTION DESIGN**:
        - What's the most targeted fix that addresses the root cause?
-       - How can I maintain test quality and coverage?
-       - Should I fix the test logic or update test expectations?
+       - Should I adjust test data, mock configuration, test setup, or test expectations?
+       - How can I ensure the fix aligns with actual production code behavior?
 
     5. **VERIFICATION STRATEGY**:
        - How will I verify this fix works correctly?
-       - What edge cases should I consider?
-       - Are there similar patterns in other tests that might need attention?
+       - What similar patterns in other tests might need the same attention?
+       - Does this fix follow testing best practices for maintainability?
 
     Work through each step systematically before proposing changes.
 
@@ -110,46 +111,60 @@ advanced_refinement:
   self_debugging_addon: |
     SELF-DEBUGGING PROCESS:
     1. Analyze the failures systematically
-    2. Propose targeted fixes
-    3. SELF-REVIEW your solution:
+    2. Assess if code is testable or needs refactoring
+    3. Propose targeted fixes OR intentionally failing tests for untestable code
+    4. SELF-REVIEW your solution:
        - Have I addressed the root cause, not just symptoms?
        - Are my changes minimal and targeted?
        - Will these changes maintain test quality and coverage?
        - Could this introduce new failure modes?
-    4. If issues found in review, revise approach
-    5. Provide final solution with confidence assessment
+       - Is this code fundamentally untestable and requiring refactoring guidance?
+    5. If issues found in review, revise approach
+    6. Provide final solution with confidence assessment
 
   # Enhanced examples with reasoning
   enhanced_examples_addon: |
     EXAMPLES OF EFFECTIVE vs. INEFFECTIVE FIXES:
 
-    ✓ GOOD - Assertion Error Fix:
-    Problem: "AssertionError: assert 5 == 4"
-    Analysis: Source code returns 4, but test expects 5
-    Fix: Update assertion to expect 4 after verifying source logic is correct
-    Reasoning: Source was correct; test assumption was wrong after recent code changes
+    ✓ GOOD - Root Cause Analysis:
+    Pattern: Test assertion failure
+    Approach: Verify production code behavior first, then adjust test expectations if production is correct
+    Reasoning: Tests should reflect actual behavior, not outdated assumptions
 
-    ✓ GOOD - Import Error Fix:
-    Problem: "ModuleNotFoundError: No module named 'requests'"
-    Analysis: External dependency used in production code being tested
-    Fix: Add @mock.patch('requests.get', return_value=Mock(status_code=200))
-    Reasoning: Unit tests should mock external dependencies, not require them
+    ✓ GOOD - Mock Interface Matching:
+    Pattern: Mock object doesn't support required operations
+    Approach: Configure mock to return data types that support the operations used in production code
+    Reasoning: Mocks must provide realistic interfaces that match production usage patterns
 
-    ✓ GOOD - Mock Configuration Fix:
-    Problem: "AttributeError: Mock object has no attribute 'items'"
-    Analysis: Mock configured incorrectly for dict-like object
-    Fix: Set mock.return_value = {'key': 'value'} instead of mock.return_value = Mock()
-    Reasoning: Mock return values should match expected interface
+    ✓ GOOD - Test Data Structure Alignment:
+    Pattern: Test provides data that causes runtime errors in production code
+    Approach: Examine production code expectations and ensure test data meets minimum requirements
+    Reasoning: Test data should be realistic enough to exercise production code paths successfully
 
-    ✗ BAD - Suppression Fix:
-    Problem: Multiple test failures across file
-    Bad Fix: Comment out all failing assertions with # TODO: fix later
-    Why Bad: Weakens test coverage and hides real issues that need addressing
+    ✓ GOOD - Dependency Isolation:
+    Pattern: Test failures due to external dependencies
+    Approach: Mock external dependencies at appropriate boundaries with realistic return values
+    Reasoning: Unit tests should be isolated from external systems while maintaining realistic interfaces
 
-    ✗ BAD - Over-broad Fix:
-    Problem: One assertion fails in specific test
-    Bad Fix: Replace all similar assertions throughout test suite
-    Why Bad: Changes unrelated tests that might be correct, introduces new bugs
+    ✗ BAD - Symptom Suppression:
+    Pattern: Comment out failing assertions or skip tests
+    Why Bad: Reduces test coverage without addressing underlying issues
+    Better Approach: Fix the root cause of the failure
+
+    ✗ BAD - Over-generalization:
+    Pattern: Apply fixes broadly across unrelated tests
+    Why Bad: May break working tests or hide different underlying issues
+    Better Approach: Fix issues individually based on specific root causes
+
+    ✓ GOOD - Untestable Code Recognition:
+    Pattern: Multiple failed refinement attempts with complex mocking requirements
+    Approach: Create intentionally failing tests with clear refactoring guidance
+    Reasoning: When code is fundamentally untestable, communicate design issues rather than forcing brittle tests
+
+    ✗ BAD - Forced Complex Mocking:
+    Pattern: Creating elaborate mock setups that are brittle and unrealistic
+    Why Bad: Results in tests that don't provide value and break easily
+    Better Approach: Recognize untestable code and provide refactoring guidance
 
   # Framework and constraints template
   framework_constraints_template: |
@@ -184,6 +199,43 @@ advanced_refinement:
 
 # Failure-specific strategies for targeted debugging
 failure_strategies:
+  # General strategy for pattern recognition and systematic debugging
+  general_debugging_strategy: |
+    GENERAL DEBUGGING STRATEGY:
+    
+    ## Core Patterns in Test Failures:
+    
+    ### 1. Mock/Data Type Mismatches
+    - Production code expects specific data types or interfaces
+    - Tests provide generic Mock objects or wrong data structures
+    - Solution: Align test data with production code expectations
+    
+    ### 2. API Contract Violations  
+    - Tests make assumptions about function/constructor signatures
+    - Production APIs have changed or tests are outdated
+    - Solution: Verify actual API contracts and update test calls
+    
+    ### 3. Test Environment Dependencies
+    - Tests rely on specific environment state or external resources
+    - Missing dependencies, incorrect configuration, or isolation issues
+    - Solution: Make tests self-contained and explicit about dependencies
+    
+    ### 4. Test Data Structure Problems
+    - Test data doesn't provide minimum structure needed by production code
+    - Empty collections where non-empty expected, missing keys, etc.
+    - Solution: Ensure test data supports the operations production code performs
+    
+    ### 5. Fundamentally Untestable Code
+    - Production code violates testability principles (tight coupling, global state, etc.)
+    - Multiple refinement attempts fail despite correct test writing approaches
+    - Solution: Create intentionally failing tests that communicate refactoring needs
+    
+    ## Systematic Approach:
+    1. **Pattern Recognition**: Identify which category the failure belongs to
+    2. **Interface Analysis**: What does production code expect vs. what tests provide?
+    3. **Testability Assessment**: Is this a fixable test issue or fundamentally untestable code?
+    4. **Minimal Fix**: Address root cause with smallest possible change
+    5. **Consistency Check**: Apply similar fixes to related test patterns
   # Strategy for assertion errors
   assertion_error_strategy: |
     ASSERTION ERROR STRATEGY:
@@ -205,12 +257,54 @@ failure_strategies:
   # Strategy for mock/fixture errors
   mock_error_strategy: |
     MOCK ERROR STRATEGY:
-    - Ensure mock return values match expected interfaces
-    - Configure mock attributes that code actually uses
-    - Use proper mock.patch syntax and placement
-    - Set up mock call expectations correctly
-    - Verify mock lifecycle (setup/teardown)
+    
+    ## Core Principle: Mock Data Types Must Match Production Code Expectations
+    
+    ### Pattern 1: Mock Type/Interface Mismatch
+    **Root Cause**: Production code expects specific data types or interfaces, but mocks return generic Mock objects
+    **Detection**: TypeErrors about missing methods/operators, AttributeErrors on Mock objects
+    **Fix Approach**: Configure mocks to return appropriate data types that support the operations used in production code
+    
+    ### Pattern 2: Mock Configuration Anti-patterns
+    **Root Cause**: Mocks are configured without understanding what the production code will do with the returned data
+    **Detection**: Runtime errors when production code tries to use mock returns in specific ways
+    **Fix Approach**: Trace through production code to understand expected data shapes and behaviors
+    
+    ### Pattern 3: Test Data Structure Mismatches  
+    **Root Cause**: Test data doesn't match the structure/content that production code expects
+    **Detection**: IndexErrors, KeyErrors, empty collection issues
+    **Fix Approach**: Ensure test data provides the minimum structure needed by production code paths
+    
+    ### Pattern 4: Mock vs Real Object Behavior Gaps
+    **Root Cause**: Mocks don't implement the same interfaces as the real objects they replace
+    **Detection**: Missing attribute/method errors, type operation failures
+    **Fix Approach**: Configure mocks to match the interface and behavior patterns of real objects
+    
+    ### Systematic Debugging for Mock Issues:
+    1. **Identify the operation**: What is the production code trying to do when it fails?
+    2. **Trace data flow**: What does the production code expect to receive?
+    3. **Check mock configuration**: Does the mock return data that supports the expected operations?
+    4. **Verify interfaces**: Does the mock implement all methods/attributes the production code uses?
 
+  # Strategy for test setup and configuration errors  
+  test_setup_error_strategy: |
+    TEST SETUP ERROR STRATEGY:
+    
+    ### Pattern 1: Constructor/Function Signature Mismatches
+    **Root Cause**: Tests make assumptions about API signatures that are outdated or incorrect
+    **Detection**: TypeError about unexpected arguments, missing required arguments
+    **Fix Approach**: Verify actual constructor/function signatures and align test calls accordingly
+    
+    ### Pattern 2: Fixture Dependency Issues
+    **Root Cause**: Tests reference fixtures that don't exist or have incorrect dependencies
+    **Detection**: Fixture not found errors, fixture dependency cycles
+    **Fix Approach**: Audit fixture definitions and ensure all referenced fixtures exist with correct scopes
+    
+    ### Pattern 3: Test Environment Assumptions
+    **Root Cause**: Tests assume specific environment state or configuration that isn't guaranteed
+    **Detection**: Import errors, configuration-dependent failures, state-dependent test failures
+    **Fix Approach**: Make tests self-contained and explicit about their dependencies
+    
   # Strategy for async/await errors
   async_error_strategy: |
     ASYNC ERROR STRATEGY:
@@ -219,6 +313,79 @@ failure_strategies:
     - Mock async functions with AsyncMock, not regular Mock
     - Handle async context managers correctly
     - Check for proper async fixture setup
+
+  # Strategy for untestable code patterns
+  untestable_code_strategy: |
+    UNTESTABLE CODE STRATEGY:
+    
+    ## When Code is Fundamentally Untestable
+    
+    **Recognition Signs**:
+    - Multiple refinement attempts fail with complex mocking requirements
+    - Production code has tight coupling to external systems, global state, or hard-to-mock dependencies
+    - Tests require extensive setup that breaks easily or doesn't reflect realistic usage
+    - Code has complex side effects, deeply nested conditionals, or monolithic functions
+    
+    **Strategy: Intentionally Failing Tests with Refactoring Guidance**
+    
+    Instead of continuing failed refinement cycles, create dummy tests that:
+    1. **Communicate the problem clearly** through meaningful failure messages
+    2. **Provide specific refactoring recommendations** 
+    3. **Highlight design issues** that make the code untestable
+    
+    ### Pattern 1: Tight Coupling Issues
+    ```python
+    def test_refactor_needed_tight_coupling():
+        pytest.fail(
+            "REFACTORING NEEDED: This function is tightly coupled to external dependencies.\n"
+            "Recommendations:\n"
+            "- Extract dependencies into injectable parameters\n"
+            "- Use dependency injection or factory patterns\n"
+            "- Create abstraction layers for external systems"
+        )
+    ```
+    
+    ### Pattern 2: Global State Dependencies  
+    ```python
+    def test_refactor_needed_global_state():
+        pytest.fail(
+            "REFACTORING NEEDED: This function depends on global state.\n"
+            "Recommendations:\n"
+            "- Pass state as explicit parameters\n"
+            "- Use context objects or dependency containers\n"
+            "- Make state dependencies explicit and injectable"
+        )
+    ```
+    
+    ### Pattern 3: Monolithic Functions
+    ```python
+    def test_refactor_needed_monolithic_function():
+        pytest.fail(
+            "REFACTORING NEEDED: This function is too complex to test effectively.\n"
+            "Recommendations:\n"
+            "- Break into smaller, single-responsibility functions\n"
+            "- Extract complex logic into separate testable units\n"
+            "- Use pure functions where possible"
+        )
+    ```
+    
+    ### Pattern 4: Hard-to-Mock Dependencies
+    ```python
+    def test_refactor_needed_hard_dependencies():
+        pytest.fail(
+            "REFACTORING NEEDED: Dependencies are difficult to mock or isolate.\n"
+            "Recommendations:\n"
+            "- Use protocols/interfaces for better abstraction\n"
+            "- Implement factory patterns for dependency creation\n"
+            "- Consider using adapter patterns for external systems"
+        )
+    ```
+    
+    **When to Use This Strategy**:
+    - After 2-3 failed refinement attempts with complex mocking issues
+    - When production code violates SOLID principles significantly  
+    - When testing requires unrealistic or brittle setup
+    - When the effort to make existing code testable exceeds the value
 
 # Confidence-based prompt adaptations
 confidence_adaptations:

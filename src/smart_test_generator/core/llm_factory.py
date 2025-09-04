@@ -17,7 +17,7 @@ class LLMClientFactory:
     @staticmethod
     def create_client(claude_api_key: Optional[str] = None,
                      claude_model: str = "claude-sonnet-4-20250514",
-                     claude_extended_thinking: bool = False,
+                     claude_extended_thinking: bool = True,
                      claude_thinking_budget: Optional[int] = None,
                      azure_endpoint: Optional[str] = None,
                      azure_api_key: Optional[str] = None,
@@ -43,14 +43,16 @@ class LLMClientFactory:
                     claude_api_key, claude_model, claude_extended_thinking, claude_thinking_budget, feedback, cost_manager, config
                 )
             elif azure_endpoint and azure_api_key and azure_deployment:
+                # For Azure OpenAI, be conservative with extended thinking to avoid API issues
                 return LLMClientFactory._create_azure_client(azure_endpoint, azure_api_key, azure_deployment, 
                                                             claude_extended_thinking, feedback, cost_manager, config)
             elif bedrock_role_arn and bedrock_inference_profile:
+                # For Bedrock, be conservative with extended thinking to avoid API issues  
                 return LLMClientFactory._create_bedrock_client(
                     role_arn=bedrock_role_arn,
                     inference_profile=bedrock_inference_profile,
                     region=bedrock_region or "us-east-1",
-                    extended_thinking=claude_extended_thinking,  # Use Claude's extended thinking setting
+                    extended_thinking=claude_extended_thinking,
                     feedback=feedback,
                     cost_manager=cost_manager,
                     config=config,
@@ -92,35 +94,37 @@ class LLMClientFactory:
 
         # Validate extended thinking configuration
         if extended_thinking:
-            # Extended thinking is only available for certain models
+            # Extended thinking is available for these models (per Anthropic docs)
             extended_thinking_supported_models = [
-                "claude-sonnet-4-20250514",
+                "claude-opus-4-1-20250805",
+                "claude-opus-4-20250514",
+                "claude-sonnet-4-20250514", 
                 "claude-3-7-sonnet-20250219"
             ]
             if model not in extended_thinking_supported_models:
-                raise ValidationError(
-                    f"Extended thinking is not supported for model: {model}",
-                    suggestion=f"Use one of: {', '.join(extended_thinking_supported_models)}"
-                )
-
-            # Validate thinking budget if provided
-            if thinking_budget is not None:
-                if not (1024 <= thinking_budget <= 32000):
-                    raise ValidationError(
-                        f"Thinking budget must be between 1024 and 32000 tokens, got: {thinking_budget}",
-                        suggestion="Use a value between 1024 and 32000 tokens"
-                    )
+                feedback.warning(f"Extended thinking is not supported for model: {model}")
+                feedback.warning(f"Falling back to standard mode. Supported models: {', '.join(extended_thinking_supported_models)}")
+                extended_thinking = False
             else:
-                # Set default thinking budget
-                thinking_budget = 4096
+                # Validate thinking budget if provided (only for supported models)
+                if thinking_budget is not None:
+                    if not (1024 <= thinking_budget <= 32000):
+                        raise ValidationError(
+                            f"Thinking budget must be between 1024 and 32000 tokens, got: {thinking_budget}",
+                            suggestion="Use a value between 1024 and 32000 tokens"
+                        )
+                else:
+                    # Set default thinking budget (increased for better performance)
+                    thinking_budget = 8192
 
+        if extended_thinking:
             feedback.info(f"Using Claude API with model: {model} (extended thinking enabled, budget: {thinking_budget} tokens)")
         else:
             feedback.info(f"Using Claude API with model: {model}")
 
         return ClaudeAPIClient(
             validated_key, model, extended_thinking=extended_thinking,
-            thinking_budget=thinking_budget if thinking_budget is not None else 4096, cost_manager=cost_manager, feedback=feedback, config=config
+            thinking_budget=thinking_budget if thinking_budget is not None else 8192, cost_manager=cost_manager, feedback=feedback, config=config
         )
     
     @staticmethod
@@ -136,13 +140,23 @@ class LLMClientFactory:
                 suggestion="Endpoint should start with 'https://' (e.g., https://your-resource.openai.azure.com/)"
             )
         
-        feedback.info("Using Azure OpenAI")
+        # Azure OpenAI uses prompt-based extended thinking (no native API support)
+        if extended_thinking:
+            feedback.info("Using Azure OpenAI (extended thinking enabled via enhanced prompts)")
+        else:
+            feedback.info("Using Azure OpenAI")
+            
         return AzureOpenAIClient(endpoint, validated_key, deployment, extended_thinking=extended_thinking,
                                cost_manager=cost_manager, feedback=feedback, config=config) 
 
     @staticmethod
     def _create_bedrock_client(*, role_arn: str, inference_profile: str, region: str, extended_thinking: bool, 
                              feedback: UserFeedback, cost_manager=None, config=None) -> BedrockClient:
-        feedback.info(f"Using AWS Bedrock (inference profile: {inference_profile}, region: {region})")
+        # Bedrock uses prompt-based extended thinking (Claude models on Bedrock support this)
+        if extended_thinking:
+            feedback.info(f"Using AWS Bedrock (inference profile: {inference_profile}, region: {region}, extended thinking enabled via enhanced prompts)")
+        else:
+            feedback.info(f"Using AWS Bedrock (inference profile: {inference_profile}, region: {region})")
+            
         return BedrockClient(role_arn=role_arn, inference_profile=inference_profile, region=region, 
                            extended_thinking=extended_thinking, cost_manager=cost_manager, feedback=feedback, config=config)
