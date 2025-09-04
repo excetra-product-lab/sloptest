@@ -287,25 +287,78 @@ def write_payload_json(payload: Dict[str, Any], out_dir: Path) -> Path:
 
 
 def build_refine_prompt(payload: Dict[str, Any], config: Config) -> str:
-    """Construct a strong, concise prompt for refinement following 2025 guidelines.
+    """Construct an enhanced prompt for refinement using latest 2024-2025 best practices.
 
-    Emphasizes: step-by-step reasoning, examples in ✓/✗, decisive instructions, minimal fluff.
+    Features: Chain-of-thought reasoning, self-debugging, failure-specific strategies, 
+    confidence-based adaptation, enhanced examples with reasoning.
     """
     style = payload.get("config_summary", {}).get("style", {})
     framework = style.get("framework", "pytest")
     failures = payload.get("failures", [])
 
+    # Get enhanced guidance flags
     guidance_flags = config.get("prompt_engineering", {})
     encourage_steps = guidance_flags.get("encourage_step_by_step", True)
     use_examples = guidance_flags.get("use_positive_negative_examples", True)
     decisive = guidance_flags.get("decisive_recommendations", True)
-
+    
+    # Enhanced 2024-2025 features (with fallbacks to legacy behavior)
+    use_enhanced_reasoning = guidance_flags.get("use_enhanced_reasoning", True)
+    enable_failure_strategies = guidance_flags.get("enable_failure_strategies", True)
+    confidence_adaptation = guidance_flags.get("confidence_based_adaptation", True)
+    
+    # Extract failure patterns for strategy selection (if enabled)
+    failure_patterns = {}
+    confidence_level = "medium"
+    failure_analysis = payload.get("failure_analysis", {})
+    
+    if enable_failure_strategies and failure_analysis:
+        pattern_frequencies = failure_analysis.get("pattern_frequencies", {})
+        # Convert pattern frequencies to a format the prompt loader expects
+        failure_patterns = {
+            pattern: count for pattern, count in pattern_frequencies.items()
+            if count > 0
+        }
+    
+    # Determine confidence level based on historical success rates (if enabled)
+    if confidence_adaptation:
+        confidence_level = _determine_confidence_level(failure_analysis)
+    
     prompt_loader = get_prompt_loader()
     return prompt_loader.get_advanced_refinement_prompt(
         framework=framework,
         encourage_steps=encourage_steps,
         use_examples=use_examples,
         decisive=decisive,
-        failures=failures
+        failures=failures,
+        use_enhanced_reasoning=use_enhanced_reasoning,
+        failure_patterns=failure_patterns,
+        confidence_level=confidence_level
     )
+
+
+def _determine_confidence_level(failure_analysis: Dict[str, Any]) -> str:
+    """Determine confidence level based on failure analysis data."""
+    if not failure_analysis:
+        return "medium"
+    
+    # Check historical success rates
+    historical_rates = failure_analysis.get("historical_success_rates", {})
+    confidence_scores = failure_analysis.get("confidence_scores", {})
+    
+    if historical_rates:
+        avg_success_rate = sum(historical_rates.values()) / len(historical_rates)
+        if avg_success_rate > 0.8:
+            return "high"
+        elif avg_success_rate < 0.4:
+            return "low"
+    
+    if confidence_scores:
+        avg_confidence = sum(confidence_scores.values()) / len(confidence_scores)
+        if avg_confidence > 0.8:
+            return "high"
+        elif avg_confidence < 0.5:
+            return "low"
+    
+    return "medium"
 

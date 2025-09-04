@@ -190,14 +190,22 @@ class Config:
             }
         },
         
-        # Prompt Engineering Settings (Based on Anthropic 2025 Guidelines)
+        # Prompt Engineering Settings (Based on latest 2024-2025 Guidelines)
         'prompt_engineering': {
-            'use_2025_guidelines': True,  # Use improved prompts following Anthropic's 2025 best practices
-            'encourage_step_by_step': True,  # Include step-by-step reasoning prompts
+            'use_2025_guidelines': True,  # Use improved prompts following latest best practices
+            'encourage_step_by_step': True,  # Include step-by-step reasoning prompts (legacy)
             'use_positive_negative_examples': True,  # Include positive/negative examples in prompts
             'minimize_xml_structure': True,  # Reduce excessive XML tags in prompts
             'decisive_recommendations': True,  # Encourage single, strong recommendations
             'preserve_uncertainty': False,  # Whether to include hedging language (usually False for technical tasks)
+            
+            # Enhanced 2024-2025 Features
+            'use_enhanced_reasoning': True,  # Use advanced Chain-of-Thought reasoning
+            'enable_self_debugging': True,  # Enable self-debugging and review checkpoints
+            'use_enhanced_examples': True,  # Use detailed examples with reasoning
+            'enable_failure_strategies': True,  # Use failure-specific debugging strategies
+            'confidence_based_adaptation': True,  # Adapt prompts based on confidence levels
+            'track_reasoning_quality': True,  # Monitor and track reasoning quality
         }
     }
 
@@ -401,12 +409,20 @@ security:
 # =============================================================================
 
 prompt_engineering:
-  use_2025_guidelines: true         # Use latest Anthropic prompt best practices
-  encourage_step_by_step: true      # Include step-by-step reasoning prompts
+  use_2025_guidelines: true         # Use latest prompt best practices
+  encourage_step_by_step: true      # Include step-by-step reasoning prompts (legacy)
   use_positive_negative_examples: true # Include positive/negative examples in prompts
   minimize_xml_structure: true      # Reduce excessive XML tags in prompts
   decisive_recommendations: true    # Encourage single, strong recommendations
   preserve_uncertainty: false       # Include hedging language (usually false)
+  
+  # Enhanced 2024-2025 Features
+  use_enhanced_reasoning: true      # Use advanced Chain-of-Thought reasoning
+  enable_self_debugging: true       # Enable self-debugging and review checkpoints
+  use_enhanced_examples: true       # Use detailed examples with reasoning
+  enable_failure_strategies: true   # Use failure-specific debugging strategies
+  confidence_based_adaptation: true # Adapt prompts based on confidence levels
+  track_reasoning_quality: true     # Monitor and track reasoning quality
 
 # =============================================================================
 # TEST QUALITY ANALYSIS

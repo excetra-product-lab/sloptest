@@ -6,18 +6,37 @@ refinement:
   system_prompt_base: |
     Analyze test failures and provide targeted fixes that maintain test quality and coverage.
 
-  # Extended thinking addition for refinement
-  extended_thinking_addon: |
+  # Enhanced Chain-of-Thought reasoning for systematic debugging
+  enhanced_thinking_addon: |
 
-    EXTENDED THINKING MODE:
-    Analyze test failures and design targeted fixes:
-    - Examine failure patterns and root causes
-    - Consider interaction effects and dependencies
-    - Plan systematic fixes addressing symptoms and underlying issues
-    - Design solutions preventing similar failures
-    - Evaluate potential side effects and edge cases
+    SYSTEMATIC DEBUGGING APPROACH - Think through this step-by-step:
 
-    Analyze test failures and provide targeted fixes that maintain test quality and coverage.
+    1. **FAILURE ANALYSIS**: 
+       - What exactly failed? Parse the error message carefully
+       - Is this a logic error, dependency issue, assertion problem, or environment issue?
+       - Are there patterns across multiple failures?
+
+    2. **ROOT CAUSE IDENTIFICATION**:
+       - What is the underlying cause, not just the symptom?
+       - Has the source code changed in a way that makes the test assumption incorrect?
+       - Are there missing mocks, wrong imports, or configuration issues?
+
+    3. **IMPACT ASSESSMENT**:
+       - Which components and test cases are affected?
+       - Could fixing this break other tests or introduce new issues?
+       - What's the minimal change needed to preserve test integrity?
+
+    4. **SOLUTION DESIGN**:
+       - What's the most targeted fix that addresses the root cause?
+       - How can I maintain test quality and coverage?
+       - Should I fix the test logic or update test expectations?
+
+    5. **VERIFICATION STRATEGY**:
+       - How will I verify this fix works correctly?
+       - What edge cases should I consider?
+       - Are there similar patterns in other tests that might need attention?
+
+    Work through each step systematically before proposing changes.
 
   # Enhanced user content template with git and pattern context
   user_content_template: |
@@ -87,13 +106,50 @@ advanced_refinement:
   decisive_addon: |
     Provide a single, decisive plan and concrete updated test files.
 
-  # Step-by-step encouragement
-  step_by_step_addon: |
-    Think step-by-step: analyze failures, propose minimal fixes, update tests, and re-run mentally.
+  # Self-debugging with review checkpoints
+  self_debugging_addon: |
+    SELF-DEBUGGING PROCESS:
+    1. Analyze the failures systematically
+    2. Propose targeted fixes
+    3. SELF-REVIEW your solution:
+       - Have I addressed the root cause, not just symptoms?
+       - Are my changes minimal and targeted?
+       - Will these changes maintain test quality and coverage?
+       - Could this introduce new failure modes?
+    4. If issues found in review, revise approach
+    5. Provide final solution with confidence assessment
 
-  # Positive/negative examples
-  examples_addon: |
-    Follow ✓/✗ patterns: ✓ correct, minimal changes; ✗ suppressing assertions or masking failures.
+  # Enhanced examples with reasoning
+  enhanced_examples_addon: |
+    EXAMPLES OF EFFECTIVE vs. INEFFECTIVE FIXES:
+
+    ✓ GOOD - Assertion Error Fix:
+    Problem: "AssertionError: assert 5 == 4"
+    Analysis: Source code returns 4, but test expects 5
+    Fix: Update assertion to expect 4 after verifying source logic is correct
+    Reasoning: Source was correct; test assumption was wrong after recent code changes
+
+    ✓ GOOD - Import Error Fix:
+    Problem: "ModuleNotFoundError: No module named 'requests'"
+    Analysis: External dependency used in production code being tested
+    Fix: Add @mock.patch('requests.get', return_value=Mock(status_code=200))
+    Reasoning: Unit tests should mock external dependencies, not require them
+
+    ✓ GOOD - Mock Configuration Fix:
+    Problem: "AttributeError: Mock object has no attribute 'items'"
+    Analysis: Mock configured incorrectly for dict-like object
+    Fix: Set mock.return_value = {'key': 'value'} instead of mock.return_value = Mock()
+    Reasoning: Mock return values should match expected interface
+
+    ✗ BAD - Suppression Fix:
+    Problem: Multiple test failures across file
+    Bad Fix: Comment out all failing assertions with # TODO: fix later
+    Why Bad: Weakens test coverage and hides real issues that need addressing
+
+    ✗ BAD - Over-broad Fix:
+    Problem: One assertion fails in specific test
+    Bad Fix: Replace all similar assertions throughout test suite
+    Why Bad: Changes unrelated tests that might be correct, introduces new bugs
 
   # Framework and constraints template
   framework_constraints_template: |
@@ -108,7 +164,7 @@ advanced_refinement:
     Failures (top):
     {failure_list}
 
-  # Output format instruction
+  # Output format instruction with confidence assessment
   output_format: |
     Return JSON in this exact format:
     {
@@ -119,7 +175,64 @@ advanced_refinement:
         }
       ],
       "rationale": "<brief_explanation_of_changes>",
-      "plan": "<summary_of_fix_strategy>"
+      "plan": "<summary_of_fix_strategy>",
+      "confidence": "<high|medium|low>",
+      "risk_assessment": "<potential_risks_or_none>"
     }
     
     Do not include prose outside JSON.
+
+# Failure-specific strategies for targeted debugging
+failure_strategies:
+  # Strategy for assertion errors
+  assertion_error_strategy: |
+    ASSERTION ERROR STRATEGY:
+    - Compare expected vs. actual values carefully
+    - Verify if source code logic changed since test was written
+    - Check if test assumptions are still valid
+    - Consider if expected values need updating vs. source code needs fixing
+    - Ensure assertions are specific and meaningful
+
+  # Strategy for import/dependency errors  
+  import_error_strategy: |
+    IMPORT ERROR STRATEGY:
+    - Identify if missing import is internal module or external dependency
+    - For external dependencies: add appropriate mocks with correct interfaces
+    - For internal modules: check if module path/name changed
+    - Verify import statement syntax and paths
+    - Consider if test setup needs additional fixtures
+
+  # Strategy for mock/fixture errors
+  mock_error_strategy: |
+    MOCK ERROR STRATEGY:
+    - Ensure mock return values match expected interfaces
+    - Configure mock attributes that code actually uses
+    - Use proper mock.patch syntax and placement
+    - Set up mock call expectations correctly
+    - Verify mock lifecycle (setup/teardown)
+
+  # Strategy for async/await errors
+  async_error_strategy: |
+    ASYNC ERROR STRATEGY:
+    - Ensure test functions are properly marked with pytest.mark.asyncio
+    - Use await for async function calls
+    - Mock async functions with AsyncMock, not regular Mock
+    - Handle async context managers correctly
+    - Check for proper async fixture setup
+
+# Confidence-based prompt adaptations
+confidence_adaptations:
+  # High confidence scenarios (>80% pattern match success rate)
+  high_confidence_addon: |
+    CONFIDENCE: HIGH - Similar patterns have been successfully resolved
+    Apply established fix patterns with confidence, but still verify assumptions.
+
+  # Medium confidence scenarios (40-80% success rate)  
+  medium_confidence_addon: |
+    CONFIDENCE: MEDIUM - Mixed success with similar patterns
+    Proceed with caution. Double-check assumptions and consider alternative approaches.
+
+  # Low confidence scenarios (<40% success rate)
+  low_confidence_addon: |
+    CONFIDENCE: LOW - Pattern has had limited success
+    Take extra care. Consider multiple approaches and explain reasoning thoroughly.
