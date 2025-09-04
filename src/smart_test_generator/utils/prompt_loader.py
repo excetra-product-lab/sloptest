@@ -179,15 +179,21 @@ class PromptLoader:
                                      encourage_steps: bool = True,
                                      use_examples: bool = True,
                                      decisive: bool = True,
-                                     failures: list = None) -> str:
-        """Get advanced refinement prompt with configurability.
+                                     failures: list = None,
+                                     use_enhanced_reasoning: bool = True,
+                                     failure_patterns: dict = None,
+                                     confidence_level: str = "medium") -> str:
+        """Get advanced refinement prompt with enhanced capabilities.
         
         Args:
             framework: Testing framework name
-            encourage_steps: Whether to include step-by-step guidance
+            encourage_steps: Whether to include step-by-step guidance (legacy)
             use_examples: Whether to include positive/negative examples
             decisive: Whether to include decisive recommendation guidance
             failures: List of failure information
+            use_enhanced_reasoning: Whether to use enhanced chain-of-thought reasoning
+            failure_patterns: Dict of failure pattern frequencies for strategy selection
+            confidence_level: Confidence level for adaptive prompting (high/medium/low)
             
         Returns:
             Complete advanced refinement prompt
@@ -200,11 +206,38 @@ class PromptLoader:
         if decisive:
             parts.append(advanced.get("decisive_addon", ""))
         
-        if encourage_steps:
+        # Use enhanced reasoning if available, fallback to step-by-step
+        if use_enhanced_reasoning:
+            refinement_base = prompts.get("refinement", {})
+            enhanced_thinking = refinement_base.get("enhanced_thinking_addon", "")
+            if enhanced_thinking:
+                parts.append(enhanced_thinking)
+            # Add self-debugging capabilities
+            self_debugging = advanced.get("self_debugging_addon", "")
+            if self_debugging:
+                parts.append(self_debugging)
+        elif encourage_steps:
+            # Fallback to legacy step-by-step
             parts.append(advanced.get("step_by_step_addon", ""))
         
+        # Use enhanced examples if available, fallback to basic examples
         if use_examples:
-            parts.append(advanced.get("examples_addon", ""))
+            enhanced_examples = advanced.get("enhanced_examples_addon", "")
+            if enhanced_examples:
+                parts.append(enhanced_examples)
+            else:
+                parts.append(advanced.get("examples_addon", ""))
+        
+        # Add failure-specific strategies based on patterns
+        if failure_patterns:
+            strategy_addon = self._get_failure_strategy_addon(failure_patterns, prompts)
+            if strategy_addon:
+                parts.append(strategy_addon)
+        
+        # Add confidence-based adaptation
+        confidence_addon = self._get_confidence_addon(confidence_level, prompts)
+        if confidence_addon:
+            parts.append(confidence_addon)
         
         # Add framework and constraints
         framework_template = advanced.get("framework_constraints_template", "")
@@ -471,6 +504,38 @@ class PromptLoader:
             formatted_failures.append(failure_line)
         
         return "\n".join(formatted_failures)
+    
+    def _get_failure_strategy_addon(self, failure_patterns: dict, prompts: dict) -> str:
+        """Get failure-specific strategy addon based on dominant failure patterns."""
+        if not failure_patterns:
+            return ""
+        
+        strategies = prompts.get("failure_strategies", {})
+        if not strategies:
+            return ""
+        
+        # Find dominant failure category
+        dominant_category = max(failure_patterns, key=failure_patterns.get)
+        dominant_count = failure_patterns[dominant_category]
+        total_failures = sum(failure_patterns.values())
+        
+        # Only apply specific strategy if it dominates (>50% of failures)
+        if dominant_count / total_failures > 0.5:
+            strategy_key = f"{dominant_category.lower()}_strategy"
+            strategy = strategies.get(strategy_key, "")
+            if strategy:
+                return f"SPECIFIC STRATEGY FOR DOMINANT FAILURE TYPE ({dominant_category.upper()}):\n{strategy}"
+        
+        return ""
+    
+    def _get_confidence_addon(self, confidence_level: str, prompts: dict) -> str:
+        """Get confidence-based adaptation addon."""
+        adaptations = prompts.get("confidence_adaptations", {})
+        if not adaptations:
+            return ""
+        
+        confidence_key = f"{confidence_level.lower()}_confidence_addon"
+        return adaptations.get(confidence_key, "")
     
     def _apply_config_guidance(self, prompt: str, config) -> str:
         """Apply configuration-driven guidance to the prompt.

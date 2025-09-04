@@ -23,6 +23,8 @@ class RefineResponse:
     updated_files: List[Dict[str, str]]  # [{path, content}]
     rationale: str
     plan: str
+    confidence: str = "medium"  # high, medium, low
+    risk_assessment: str = ""
 
 
 @dataclass
@@ -33,6 +35,9 @@ class RefinementOutcome:
     pattern_insights: Dict[str, Any] = None  # Pattern analysis insights
     retry_strategy_used: str = "default"
     confidence_improvement: float = 0.0
+    final_confidence: str = "medium"  # Final confidence level from last attempt
+    risk_assessments: List[str] = None  # Risk assessments from each attempt
+    reasoning_quality: str = "unknown"  # Quality assessment of the reasoning provided
 
 
 def _jitter_delay(base: float, cap: float, attempt: int, failure_category: str = None) -> float:
@@ -120,6 +125,11 @@ def run_refinement_cycle(
     last_exit = 1
     pattern_analyzer = FailurePatternAnalyzer(project_root)
     initial_confidence = _calculate_average_confidence(payload)
+    
+    # Track refinement quality metrics
+    confidence_levels = []
+    risk_assessments = []
+    reasoning_quality = "unknown"
 
     for attempt in range(1, max_retries + 1):
         iter_dir = artifacts_dir / f"iter_{attempt}"
@@ -137,24 +147,54 @@ def run_refinement_cycle(
             logger.error(f"Request data types - payload: {type(payload)}, prompt: {type(prompt)}")
             response_text = ""
 
+        # Parse response and extract enhanced information
+        refine_response = None
+        updated_files = []
+        
         try:
             # Check if we have content to parse
             if not response_text or not response_text.strip():
                 logger.warning(f"Empty response from LLM for refinement iteration {attempt}")
-                updated_files = []
             else:
                 data = json.loads(response_text)
                 updated_files = data.get("updated_files", [])
+                
+                # Create enhanced response object
+                refine_response = RefineResponse(
+                    updated_files=updated_files,
+                    rationale=data.get("rationale", ""),
+                    plan=data.get("plan", ""),
+                    confidence=data.get("confidence", "medium"),
+                    risk_assessment=data.get("risk_assessment", "")
+                )
+                
+                # Log enhanced information for monitoring
+                logger.info(f"Refinement attempt {attempt}: "
+                          f"confidence={refine_response.confidence}, "
+                          f"files_updated={len(updated_files)}, "
+                          f"risk={'present' if refine_response.risk_assessment else 'none'}")
+                
+                # Collect quality metrics
+                confidence_levels.append(refine_response.confidence)
+                if refine_response.risk_assessment:
+                    risk_assessments.append(refine_response.risk_assessment)
+                
+                # Assess reasoning quality based on presence of detailed rationale and plan
+                if len(refine_response.rationale) > 50 and len(refine_response.plan) > 30:
+                    reasoning_quality = "good"
+                elif refine_response.rationale and refine_response.plan:
+                    reasoning_quality = "basic"
+                else:
+                    reasoning_quality = "poor"
+                
         except json.JSONDecodeError as e:
             logger.error(f"JSON parse error in refinement iteration {attempt}: {e}")
             logger.error(f"Failed content preview: {repr(response_text[:200])}")
             if "Expecting value: line 1 column 1 (char 0)" in str(e):
                 logger.error("The AI returned empty or non-JSON content for refinement")
                 logger.debug(f"Full response: {repr(response_text)}")
-            updated_files = []
         except Exception as e:
             logger.error(f"Unexpected error parsing refinement response: {e}")
-            updated_files = []
 
         if not updated_files and stop_on_no_change:
             break
@@ -182,16 +222,23 @@ def run_refinement_cycle(
         dominant_category = strategy_config.get("dominant_category", "unknown")
         time.sleep(_jitter_delay(base, cap, attempt, dominant_category))
 
-    # Calculate confidence improvement
-    final_confidence = initial_confidence  # Could be updated with post-refinement analysis
-    confidence_improvement = final_confidence - initial_confidence
+    # Calculate confidence improvement and final state
+    final_confidence_level = confidence_levels[-1] if confidence_levels else "medium"
+    
+    # Convert confidence levels to numeric for improvement calculation
+    confidence_map = {"low": 0.3, "medium": 0.6, "high": 0.9}
+    numeric_final = confidence_map.get(final_confidence_level, 0.6)
+    confidence_improvement = numeric_final - initial_confidence
 
-    # Gather pattern insights for the outcome
+    # Gather enhanced pattern insights for the outcome
     pattern_insights = {
         "strategy_used": retry_strategy,
         "strategy_config": strategy_config,
         "initial_confidence": initial_confidence,
-        "failure_categories": list(payload.get("failure_analysis", {}).get("pattern_frequencies", {}).keys())
+        "final_numeric_confidence": numeric_final,
+        "failure_categories": list(payload.get("failure_analysis", {}).get("pattern_frequencies", {}).keys()),
+        "confidence_progression": confidence_levels,
+        "total_attempts": attempt
     }
 
     return RefinementOutcome(
@@ -200,7 +247,10 @@ def run_refinement_cycle(
         updated_any=updated_any,
         pattern_insights=pattern_insights,
         retry_strategy_used=retry_strategy,
-        confidence_improvement=confidence_improvement
+        confidence_improvement=confidence_improvement,
+        final_confidence=final_confidence_level,
+        risk_assessments=risk_assessments,
+        reasoning_quality=reasoning_quality
     )
 
 
