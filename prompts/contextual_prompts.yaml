@@ -1,0 +1,121 @@
+# Contextual prompts for incremental and specialized test generation
+# These prompts provide context-specific guidance for test generation
+
+incremental_testing:
+  # 2025 format context for incremental testing
+  context_2025_format: |
+
+    CONTEXT - INCREMENTAL TESTING:
+    Generate tests ONLY for these untested elements: {untested_elements}
+
+    Existing test style (match this):
+    {existing_tests}...
+
+    Do not regenerate existing tests. Focus exclusively on the listed elements.
+
+  # Legacy format context for incremental testing
+  context_legacy_format: |
+
+    IMPORTANT CONTEXT:
+    This file already has some tests. You should ONLY generate tests for the following untested elements:
+
+    {untested_elements}
+
+    The existing test file(s) use the following patterns and style:
+    {existing_tests}...
+
+    Match the existing testing style and patterns. Only generate tests for the elements listed above.
+    Do not regenerate tests for elements that are already tested.
+
+# Quality guidance based on target scores
+quality_guidance:
+  # High standard (90%+ quality target)
+  high_standard: |
+    QUALITY TARGET: {target}% (HIGH STANDARD)
+    - Use exact assertions with specific expected values
+    - Test all edge cases: None, empty collections, boundaries
+    - Include complete error condition testing
+    - Ensure test independence with proper fixtures
+
+  # Good standard (75%+ quality target)
+  good_standard: |
+    QUALITY TARGET: {target}% (GOOD STANDARD)
+    - Test success and error conditions
+    - Include edge cases and boundary values
+    - Use specific assertions over generic ones
+
+  # Basic standard (<75% quality target)
+  basic_standard: |
+    QUALITY TARGET: {target}% (BASIC STANDARD)
+    - Focus on common use cases and clear assertions
+    - Include basic error condition testing
+
+# Mutation testing guidance by pattern type
+mutation_guidance:
+  header: |
+    MUTATION TESTING - Address these weak patterns:
+
+  patterns:
+    arithmetic_operator: |
+      • Arithmetic Operator: Test exact arithmetic results, verify different operators fail
+
+    comparison_operator: |
+      • Comparison Operator: Test boundary conditions (equal, just above/below)
+
+    logical_operator: |
+      • Logical Operator: Test both AND/OR branches with scenarios where logic matters
+
+    constant_value: |
+      • Constant Value: Use specific expected values, test boundary constants
+
+    boundary_value: |
+      • Boundary Value: Add complete off-by-one tests
+
+  # Target score template
+  target_score: |
+    TARGET MUTATION SCORE: {target}%
+
+  # Suggestion template
+  suggestion_template: |
+    Suggestion: {suggestion}
+
+# Configuration-driven test generation guidance
+generation_guidance:
+  fixtures:
+    generate: |
+      FIXTURE GENERATION GUIDANCE:
+      ✓ Look for repeated setup patterns in test methods
+      ✓ Create @pytest.fixture for common object creation
+      ✓ Use fixture scopes appropriately (function, class, module, session)
+      ✓ Generate conftest.py for shared fixtures across multiple test files
+      ✓ Example pattern:
+        @pytest.fixture
+        def sample_user():
+            return User(name="Test User", email="test@example.com")
+    
+    disable: |
+      FIXTURE GUIDANCE:
+      ✗ Avoid generating @pytest.fixture decorators
+      ✗ Use direct instantiation in test methods instead
+      ✗ Keep setup code within individual test methods
+  
+  parametrize:
+    enable: |
+      PARAMETRIZATION GUIDANCE:
+      ✓ Look for test methods that test similar behavior with different inputs
+      ✓ Consolidate similar tests using @pytest.mark.parametrize
+      ✓ Use descriptive parameter IDs for better test output
+      ✓ Example pattern:
+        @pytest.mark.parametrize("input_val,expected", [
+            (1, 2, id="positive"),
+            (-1, 0, id="negative"),
+            (0, 1, id="zero")
+        ])
+        def test_increment(input_val, expected):
+            assert increment(input_val) == expected
+    
+    disable: |
+      PARAMETRIZATION GUIDANCE:  
+      ✗ Avoid @pytest.mark.parametrize decorators
+      ✗ Create separate test methods for different input scenarios
+      ✗ Each test case should have its own dedicated method

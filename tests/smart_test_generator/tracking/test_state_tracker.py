@@ -167,7 +167,16 @@ class TestTestGenerationTracker:
         """Test generation when coverage is below minimum threshold."""
         tracker = TestGenerationTracker()
         config = Mock()
-        config.get.return_value = 80
+        # Setup proper config mocking - return False for always_analyze_new_files, 80 for coverage threshold
+        def mock_config_get(key, default=None):
+            if key == 'test_generation.generation.always_analyze_new_files':
+                return False
+            elif key == 'test_generation.coverage.minimum_line_coverage':
+                return 80
+            elif key == 'test_generation.coverage.minimum_branch_coverage':
+                return 70
+            return default
+        config.get.side_effect = mock_config_get
         
         coverage = TestCoverage(
             filepath="test.py",
@@ -183,14 +192,23 @@ class TestTestGenerationTracker:
         )
         
         assert should_generate is True
-        assert "Coverage (60.0%) below minimum (80%)" in reason
+        assert "Line coverage (60.0%) below minimum (80%)" in reason
 
     def test_should_generate_tests_coverage_dropped_significantly(self):
         """Test generation when coverage drops significantly."""
         tracker = TestGenerationTracker()
         tracker.state.coverage_history = {"test.py": [90.0]}
         config = Mock()
-        config.get.return_value = 80
+        # Setup proper config mocking
+        def mock_config_get(key, default=None):
+            if key == 'test_generation.generation.always_analyze_new_files':
+                return False
+            elif key == 'test_generation.coverage.minimum_line_coverage':
+                return 80
+            elif key == 'test_generation.coverage.minimum_branch_coverage':
+                return 70
+            return default
+        config.get.side_effect = mock_config_get
         
         coverage = TestCoverage(
             filepath="test.py",
@@ -212,7 +230,16 @@ class TestTestGenerationTracker:
         """Test generation when untested functions exist."""
         tracker = TestGenerationTracker()
         config = Mock()
-        config.get.return_value = 80
+        # Setup proper config mocking
+        def mock_config_get(key, default=None):
+            if key == 'test_generation.generation.always_analyze_new_files':
+                return False
+            elif key == 'test_generation.coverage.minimum_line_coverage':
+                return 80
+            elif key == 'test_generation.coverage.minimum_branch_coverage':
+                return 70
+            return default
+        config.get.side_effect = mock_config_get
         
         coverage = TestCoverage(
             filepath="test.py",
@@ -234,7 +261,16 @@ class TestTestGenerationTracker:
         """Test skipping generation when coverage is adequate."""
         tracker = TestGenerationTracker()
         config = Mock()
-        config.get.return_value = 80
+        # Setup proper config mocking
+        def mock_config_get(key, default=None):
+            if key == 'test_generation.generation.always_analyze_new_files':
+                return False
+            elif key == 'test_generation.coverage.minimum_line_coverage':
+                return 80
+            elif key == 'test_generation.coverage.minimum_branch_coverage':
+                return 70
+            return default
+        config.get.side_effect = mock_config_get
         
         coverage = TestCoverage(
             filepath="test.py",
@@ -486,7 +522,16 @@ class TestTestGenerationTracker:
         tracker = TestGenerationTracker()
         tracker.state.coverage_history = {"test.py": []}
         config = Mock()
-        config.get.return_value = 80
+        # Setup proper config mocking
+        def mock_config_get(key, default=None):
+            if key == 'test_generation.generation.always_analyze_new_files':
+                return False
+            elif key == 'test_generation.coverage.minimum_line_coverage':
+                return 80
+            elif key == 'test_generation.coverage.minimum_branch_coverage':
+                return 70
+            return default
+        config.get.side_effect = mock_config_get
         
         coverage = TestCoverage(
             filepath="test.py",

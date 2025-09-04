@@ -54,3 +54,4 @@ Thumbs.db
 
 # uv
 .python-version
+.env

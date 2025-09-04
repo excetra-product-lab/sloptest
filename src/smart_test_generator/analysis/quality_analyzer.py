@@ -396,17 +396,18 @@ class TestQualityEngine:
             EdgeCaseAnalyzer(),
             AssertionStrengthAnalyzer(),
             MaintainabilityAnalyzer(),
-            BugDetectionAnalyzer()
+            BugDetectionAnalyzer(),
+            IndependenceAnalyzer()
         ]
         
         # Weights for different quality dimensions
         self.dimension_weights = {
-            QualityDimension.EDGE_CASE_COVERAGE: 0.25,
-            QualityDimension.ASSERTION_STRENGTH: 0.20,
-            QualityDimension.MAINTAINABILITY: 0.20,
-            QualityDimension.BUG_DETECTION_POTENTIAL: 0.30,
+            QualityDimension.EDGE_CASE_COVERAGE: 0.22,
+            QualityDimension.ASSERTION_STRENGTH: 0.18,
+            QualityDimension.MAINTAINABILITY: 0.18,
+            QualityDimension.BUG_DETECTION_POTENTIAL: 0.27,
             QualityDimension.READABILITY: 0.05,
-            QualityDimension.INDEPENDENCE: 0.00  # Not implemented yet
+            QualityDimension.INDEPENDENCE: 0.10  # Newly implemented
         }
     
     def analyze_test_quality(self, test_file: str, source_file: str = "") -> TestQualityReport:
@@ -476,6 +477,20 @@ class TestQualityEngine:
             maintainability_issues=maintainability_issues,
             improvement_suggestions=list(set(all_suggestions)),  # Remove duplicates
             priority_fixes=list(set(all_priority_fixes))
+        )
+    
+    def _create_empty_report(self, test_file: str) -> TestQualityReport:
+        """Create an empty quality report for failed analysis."""
+        return TestQualityReport(
+            test_file=test_file,
+            overall_score=0.0,
+            dimension_scores={},
+            edge_cases_found=[],
+            edge_cases_missing=[],
+            weak_assertions=[],
+            maintainability_issues=["Analysis failed - unable to process test file"],
+            improvement_suggestions=["Analysis failed - fix test file errors and re-run analysis"],
+            priority_fixes=["Fix test file accessibility and syntax errors"]
         )
     
     def _calculate_overall_score(self, dimension_scores: Dict[QualityDimension, QualityScore]) -> float:
@@ -561,12 +576,288 @@ class TestQualityEngine:
             issues.append(f"Too many magic numbers ({len(magic_numbers)}) - consider using named constants")
         
         return issues
+
+
+class IndependenceAnalyzer(QualityAnalyzer):
+    """Analyze test independence and isolation."""
     
-    def _create_empty_report(self, test_file: str) -> TestQualityReport:
-        """Create an empty report for failed analysis."""
-        return TestQualityReport(
-            test_file=test_file,
-            overall_score=0.0,
-            improvement_suggestions=["Analysis failed - check file format and syntax"],
-            priority_fixes=["Fix syntax errors or file accessibility issues"]
-        ) 
+    def __init__(self):
+        # Patterns for detecting shared state and dependencies
+        self.shared_state_patterns = {
+            'class_variables': [
+                r'self\.__class__\.\w+\s*=',  # Class attribute modification
+                r'class\s+\w+.*:\s*\n\s+\w+\s*=.*\[\]',  # Shared class collections
+                r'class\s+\w+.*:\s*\n\s+\w+\s*=.*\{\}',  # Shared class dicts
+            ],
+            'global_variables': [
+                r'global\s+\w+',  # Global declarations
+                r'import.*as\s+\w+.*\n.*\w+\.\w+\s*=',  # Module attribute modification
+            ],
+            'module_state': [
+                r'sys\.modules\[',  # Module manipulation
+                r'importlib\.reload',  # Module reloading
+                r'os\.environ\[',  # Environment modification
+                r'os\.chdir\(',  # Directory changes
+            ],
+            'singleton_patterns': [
+                r'\.instance\s*=',  # Singleton instance modification
+                r'\.getInstance\(\)',  # Singleton access
+                r'@.*singleton',  # Singleton decorators
+            ]
+        }
+        
+        self.dependency_patterns = {
+            'execution_order': [
+                r'#.*previous.*test',  # References to previous tests in comments
+                r'#.*called.*before',  # Order dependencies in comments
+                r'#.*depends.*on.*test',  # Explicit dependencies in comments
+            ],
+            'test_data_sharing': [
+                r'self\.\w+.*=.*test_\w+',  # Storing test results in instance vars
+                r'self\.\w+\s*=\s*["\'].*["\']',  # Storing data in instance variables
+                r'class.*:\s*\n\s*\w+\s*=.*\[\]',  # Shared class-level collections
+                r'class.*:\s*\n\s*\w+\s*=.*\{\}',  # Shared class-level dicts
+                r'assert\s+hasattr\(self,\s*["\'].*["\']',  # Checking for attributes set by other tests
+            ],
+            'file_system_deps': [
+                r'open\(["\'][^"\']*["\'].*["\']w["\']',  # File writing without cleanup
+                r'mkdir\(|makedirs\(',  # Directory creation
+                r'remove\(|rmdir\(',  # File/dir removal (potential cleanup)
+            ],
+            'database_deps': [
+                r'\.commit\(\)',  # Database commits
+                r'\.save\(\)',  # ORM saves
+                r'INSERT\s+INTO|UPDATE\s+|DELETE\s+FROM',  # SQL operations
+            ]
+        }
+        
+        self.isolation_patterns = {
+            'proper_cleanup': [
+                r'tearDown\(|teardown\(',  # Cleanup methods
+                r'@.*fixture.*scope',  # Scoped fixtures
+                r'yield.*\n.*finally:|yield.*\n.*except:',  # Fixture cleanup
+                r'with\s+.*:',  # Context managers
+            ],
+            'mocking_isolation': [
+                r'@patch|@mock\.patch',  # Proper mocking
+                r'with\s+patch\(',  # Context manager mocking
+                r'Mock\(\)|MagicMock\(\)',  # Mock objects
+            ],
+            'temporary_resources': [
+                r'tempfile\.|NamedTemporaryFile|TemporaryDirectory',  # Temp files
+                r'mkdtemp\(|mkstemp\(',  # Temp directory/file creation
+            ]
+        }
+    
+    def get_dimension(self) -> QualityDimension:
+        return QualityDimension.INDEPENDENCE
+    
+    def analyze(self, test_code: str, source_code: str = "") -> QualityScore:
+        """Analyze test independence and isolation."""
+        score = 100.0  # Start with perfect score
+        details = {}
+        suggestions = []
+        violations = []
+        
+        # Analyze shared state issues
+        shared_state_score, shared_violations = self._analyze_shared_state(test_code)
+        score -= (100 - shared_state_score) * 0.4  # 40% weight
+        violations.extend(shared_violations)
+        details['shared_state_score'] = shared_state_score
+        
+        # Analyze execution order dependencies
+        order_score, order_violations = self._analyze_execution_order(test_code)
+        score -= (100 - order_score) * 0.3  # 30% weight
+        violations.extend(order_violations)
+        details['execution_order_score'] = order_score
+        
+        # Analyze proper isolation and cleanup
+        isolation_score, isolation_violations = self._analyze_isolation(test_code)
+        score -= (100 - isolation_score) * 0.3  # 30% weight
+        violations.extend(isolation_violations)
+        details['isolation_score'] = isolation_score
+        
+        # Generate suggestions based on violations
+        suggestions = self._generate_suggestions(violations)
+        
+        # Additional analysis
+        test_functions = re.findall(r'def\s+test_\w+', test_code)
+        details['total_test_functions'] = len(test_functions)
+        details['violations_found'] = len(violations)
+        details['violation_types'] = list(set(v['type'] for v in violations))
+        
+        # Ensure score doesn't go below 0
+        final_score = max(score, 0.0)
+        
+        return QualityScore(
+            dimension=self.get_dimension(),
+            score=final_score,
+            details=details,
+            suggestions=suggestions
+        )
+    
+    def _analyze_shared_state(self, test_code: str) -> Tuple[float, List[Dict[str, Any]]]:
+        """Analyze shared state violations."""
+        violations = []
+        score = 100.0
+        
+        for category, patterns in self.shared_state_patterns.items():
+            for pattern in patterns:
+                matches = list(re.finditer(pattern, test_code, re.MULTILINE | re.IGNORECASE))
+                for match in matches:
+                    line_num = test_code[:match.start()].count('\n') + 1
+                    violations.append({
+                        'type': f'shared_state_{category}',
+                        'line': line_num,
+                        'code': match.group(0).strip(),
+                        'severity': self._get_severity(category)
+                    })
+                    
+                    # Deduct points based on severity
+                    if category == 'global_variables':
+                        score -= 20  # High penalty for globals
+                    elif category == 'class_variables':
+                        score -= 15  # Medium penalty for class vars
+                    elif category == 'module_state':
+                        score -= 25  # Very high penalty for module state
+                    else:
+                        score -= 10  # Lower penalty for other patterns
+        
+        return max(score, 0.0), violations
+    
+    def _analyze_execution_order(self, test_code: str) -> Tuple[float, List[Dict[str, Any]]]:
+        """Analyze execution order dependencies."""
+        violations = []
+        score = 100.0
+        
+        for category, patterns in self.dependency_patterns.items():
+            for pattern in patterns:
+                matches = list(re.finditer(pattern, test_code, re.MULTILINE | re.IGNORECASE))
+                for match in matches:
+                    line_num = test_code[:match.start()].count('\n') + 1
+                    violations.append({
+                        'type': f'order_dependency_{category}',
+                        'line': line_num,
+                        'code': match.group(0).strip(),
+                        'severity': self._get_severity(category)
+                    })
+                    
+                    # Deduct points based on category
+                    if category == 'execution_order':
+                        score -= 30  # Very high penalty for order deps
+                    elif category == 'test_data_sharing':
+                        score -= 20  # High penalty for data sharing
+                    elif category == 'database_deps':
+                        score -= 25  # High penalty for DB deps
+                    else:
+                        score -= 15  # Medium penalty for file system deps
+        
+        return max(score, 0.0), violations
+    
+    def _analyze_isolation(self, test_code: str) -> Tuple[float, List[Dict[str, Any]]]:
+        """Analyze proper isolation and cleanup."""
+        score = 100.0
+        violations = []
+        isolation_found = {}
+        
+        # Check for proper isolation patterns
+        for category, patterns in self.isolation_patterns.items():
+            found_count = 0
+            for pattern in patterns:
+                matches = re.findall(pattern, test_code, re.MULTILINE | re.IGNORECASE)
+                found_count += len(matches)
+            isolation_found[category] = found_count
+        
+        # Analyze test classes for proper setup/teardown
+        test_classes = re.findall(r'class\s+(Test\w+).*?(?=class|\Z)', test_code, re.DOTALL)
+        for i, test_class in enumerate(test_classes):
+            # Check for setUp/tearDown methods
+            has_setup = bool(re.search(r'def\s+setUp\(', test_class))
+            has_teardown = bool(re.search(r'def\s+tearDown\(', test_class))
+            
+            if has_setup and not has_teardown:
+                violations.append({
+                    'type': 'missing_teardown',
+                    'line': test_code.find(test_class) // len(test_code.split('\n')) + 1,
+                    'code': f'Test class {i+1} has setUp but no tearDown',
+                    'severity': 'medium'
+                })
+                score -= 15
+        
+        # Check for resource cleanup patterns
+        resource_patterns = [
+            r'(?<!with\s)open\(["\'][^"\']+["\'].*["\']w["\']',  # Files opened for writing without context manager
+            r'(?<!with\s)connect\([^)]+\)',  # Connections without context manager
+        ]
+        
+        for pattern in resource_patterns:
+            matches = list(re.finditer(pattern, test_code, re.MULTILINE))
+            for match in matches:
+                line_num = test_code[:match.start()].count('\n') + 1
+                violations.append({
+                    'type': 'resource_leak_risk',
+                    'line': line_num,
+                    'code': match.group(0).strip(),
+                    'severity': 'medium'
+                })
+                score -= 10
+        
+        # Bonus for good isolation practices
+        if isolation_found['proper_cleanup'] > 0:
+            score += min(isolation_found['proper_cleanup'] * 2, 10)
+        if isolation_found['mocking_isolation'] > 0:
+            score += min(isolation_found['mocking_isolation'] * 2, 10)
+        if isolation_found['temporary_resources'] > 0:
+            score += min(isolation_found['temporary_resources'] * 2, 10)
+        
+        return min(max(score, 0.0), 100.0), violations
+    
+    def _get_severity(self, category: str) -> str:
+        """Get severity level for a violation category."""
+        high_severity = ['global_variables', 'module_state', 'execution_order', 'database_deps']
+        medium_severity = ['class_variables', 'test_data_sharing', 'file_system_deps']
+        
+        if category in high_severity:
+            return 'high'
+        elif category in medium_severity:
+            return 'medium'
+        else:
+            return 'low'
+    
+    def _generate_suggestions(self, violations: List[Dict[str, Any]]) -> List[str]:
+        """Generate improvement suggestions based on violations."""
+        suggestions = []
+        violation_types = set(v['type'] for v in violations)
+        
+        # Suggestions for specific violation types
+        suggestion_map = {
+            'shared_state_global_variables': "Avoid global variables in tests. Use fixtures or dependency injection instead.",
+            'shared_state_class_variables': "Avoid modifying class variables in tests. Use instance variables or mocks.",
+            'shared_state_module_state': "Avoid modifying module state. Use mocks or temporary environments.",
+            'order_dependency_execution_order': "Tests should not depend on execution order. Make each test independent.",
+            'order_dependency_test_data_sharing': "Avoid sharing data between tests. Use fresh data in each test.",
+            'order_dependency_database_deps': "Use database transactions or separate test databases to isolate tests.",
+            'order_dependency_file_system_deps': "Use temporary files/directories that are cleaned up after each test.",
+            'missing_teardown': "Add tearDown methods to clean up after setUp methods.",
+            'resource_leak_risk': "Use context managers (with statements) for resource management."
+        }
+        
+        # Add specific suggestions for found violations
+        for violation_type in violation_types:
+            if violation_type in suggestion_map:
+                suggestions.append(suggestion_map[violation_type])
+        
+        # Add general suggestions based on violation patterns
+        if any('shared_state' in vt for vt in violation_types):
+            suggestions.append("Consider using pytest fixtures with appropriate scopes for test data.")
+        
+        if any('order_dependency' in vt for vt in violation_types):
+            suggestions.append("Each test should set up its own required state and clean up afterwards.")
+        
+        if len(violations) > 5:
+            suggestions.append("Consider refactoring tests to improve isolation and reduce dependencies.")
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys(suggestions))
+
+ 

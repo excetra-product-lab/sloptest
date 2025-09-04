@@ -119,6 +119,10 @@ class MutationType(Enum):
     LOOP_MUTATION = "loop_mutation"              # loop conditions
     EXCEPTION_HANDLING = "exception_handling"   # try/catch modifications
     METHOD_CALL = "method_call"                  # method invocation changes
+    # Modern Python mutation types
+    TYPE_HINT = "type_hint"                      # Optional[T] → T, Union mutations
+    ASYNC_AWAIT = "async_await"                  # async/await mutations
+    DATACLASS = "dataclass"                      # @dataclass mutations
 
 
 @dataclass

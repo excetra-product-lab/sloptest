@@ -72,15 +72,16 @@ class Config:
             ],
             'style': {
                 'framework': 'pytest',
-                'assertion_style': 'assert',
-                'mock_library': 'unittest.mock'
+                'assertion_style': 'pytest',  # Options: 'pytest', 'unittest', 'auto'
+                'mock_library': 'unittest.mock'  # Options: 'unittest.mock', 'pytest-mock', 'auto'
             },
             'coverage': {
                 'minimum_line_coverage': 80,
-                'minimum_branch_coverage': 70,
+                'minimum_branch_coverage': 70,  # Minimum branch coverage percentage
                 'regenerate_if_below': 60,  # Regenerate tests if coverage drops below this
                 # Additional runner configuration for coverage/pytest invocation
                 'pytest_args': [],  # Extra arguments appended to pytest command
+                'junit_xml': True,   # Always enable JUnit XML for all coverage runs (primary parsing method)
                 'runner': {
                     'mode': 'python-module',          # 'python-module' | 'pytest-path' | 'custom'
                     'python': None,                   # If None, use current sys.executable
@@ -96,17 +97,19 @@ class Config:
                 }
             },
             'generation': {
-                'include_docstrings': True,
-                'generate_fixtures': True,
-                'parametrize_similar_tests': True,
-                'max_test_methods_per_class': 20,
-                'always_analyze_new_files': True,
+                # Test content and structure options
+                'include_docstrings': True,  # Include docstrings in test methods (true, false, "minimal")
+                'generate_fixtures': True,  # Generate pytest fixtures for common setup
+                'parametrize_similar_tests': True,  # Use @pytest.mark.parametrize for similar tests
+                'max_test_methods_per_class': 20,  # Maximum test methods per class (0 for unlimited)
+                'always_analyze_new_files': False,  # Always analyze new files even if they have tests
+                
                 # Post-generation pytest runner (Task 2.1)
                 'test_runner': {
                     'enable': False,          # Default off to preserve current behavior
                     'args': [],               # Extra pytest args, e.g., ['-q']
                     'cwd': None,              # Working directory; default project root
-                    'junit_xml': False        # When true, write JUnit XML to artifacts for failure parsing
+                    'junit_xml': True         # Always enable JUnit XML for reliable failure parsing
                 },
                 'merge': {
                     'strategy': 'append',     # 'append' | 'ast-merge'
@@ -120,6 +123,29 @@ class Config:
                     'backoff_max_sec': 8.0,
                     'stop_on_no_change': True,
                     'max_total_minutes': 5
+                }
+            }
+        },
+        'environment': {
+            'auto_detect': True,                    # Auto-detect current environment manager
+            'preferred_manager': 'auto',            # 'poetry' | 'pipenv' | 'conda' | 'uv' | 'venv' | 'auto'
+            'respect_virtual_env': True,            # Always use current virtual env
+            'dependency_validation': True,          # Validate deps before running tests
+            
+            # Environment-specific overrides
+            'overrides': {
+                'poetry': {
+                    'use_poetry_run': True,         # Use `poetry run pytest` instead of direct python
+                    'respect_poetry_venv': True,
+                },
+                'pipenv': {
+                    'use_pipenv_run': True,         # Use `pipenv run pytest`
+                },
+                'conda': {
+                    'activate_environment': True,   # Ensure conda environment is active
+                },
+                'uv': {
+                    'use_uv_run': False,           # Use direct python instead of `uv run`
                 }
             }
         },
@@ -141,6 +167,27 @@ class Config:
             'enable_ast_validation': False,  # Use safer regex validation by default
             'max_generated_file_size': 50000,  # 50KB limit for generated test files
             'block_dangerous_patterns': True,  # Block potentially dangerous code patterns
+        },
+        
+        # Quality Analysis Settings
+        'quality': {
+            'enable_quality_analysis': True,  # Enable quality analysis by default
+            'enable_mutation_testing': True,  # Enable mutation testing by default
+            'minimum_quality_score': 75.0,   # Minimum acceptable quality score
+            'minimum_mutation_score': 80.0,  # Minimum acceptable mutation score
+            'max_mutants_per_file': 50,      # Maximum mutants per file for performance
+            'mutation_timeout': 30,          # Timeout in seconds for mutation testing
+            'display_detailed_results': True,  # Show detailed quality analysis results
+            
+            # Modern Python Mutators (Task 6)
+            'modern_mutators': {
+                'enable_type_hints': True,      # Enable type hint mutations (Optional, Union, etc.)
+                'enable_async_await': True,     # Enable async/await mutations
+                'enable_dataclass': True,      # Enable dataclass mutations
+                'type_hints_severity': 'medium',  # Severity for type hint mutations: low, medium, high
+                'async_severity': 'high',         # Async mutations often critical for correctness
+                'dataclass_severity': 'medium',   # Dataclass mutations typically medium severity
+            }
         },
         
         # Prompt Engineering Settings (Based on Anthropic 2025 Guidelines)
@@ -222,8 +269,8 @@ test_generation:
   
   style:
     framework: 'pytest'              # Options: 'pytest', 'unittest'
-    assertion_style: 'assert'       # Options: 'assert', 'self.assert'
-    mock_library: 'unittest.mock'   # Options: 'unittest.mock', 'pytest-mock'
+    assertion_style: 'pytest'       # Options: 'pytest', 'unittest', 'auto'
+    mock_library: 'unittest.mock'   # Options: 'unittest.mock', 'pytest-mock', 'auto'
 
   # =============================================================================
   # COVERAGE ANALYSIS & THRESHOLDS
@@ -232,7 +279,7 @@ test_generation:
   coverage:
     # Coverage thresholds
     minimum_line_coverage: 80        # Minimum line coverage percentage
-    minimum_branch_coverage: 70     # Minimum branch coverage percentage
+    minimum_branch_coverage: 70      # Minimum branch coverage percentage
     regenerate_if_below: 60         # Regenerate tests if coverage drops below this
     
     # Additional pytest arguments for coverage runs
@@ -258,12 +305,12 @@ test_generation:
   # =============================================================================
   
   generation:
-    # Content generation settings
-    include_docstrings: true        # Include docstrings in generated tests
-    generate_fixtures: true        # Generate pytest fixtures when beneficial
-    parametrize_similar_tests: true # Use pytest.mark.parametrize for similar tests
-    max_test_methods_per_class: 20  # Limit test methods per test class
-    always_analyze_new_files: true # Always analyze files not seen before
+    # Test content and structure options
+    include_docstrings: true         # Include docstrings in test methods (true, false, "minimal")
+    generate_fixtures: true          # Generate pytest fixtures for common setup
+    parametrize_similar_tests: true  # Use @pytest.mark.parametrize for similar tests
+    max_test_methods_per_class: 20   # Maximum test methods per class (0 for unlimited)
+    always_analyze_new_files: false  # Always analyze new files even if they have tests
     
     # Post-generation test runner (runs pytest after generating tests)
     test_runner:
@@ -286,6 +333,37 @@ test_generation:
       backoff_max_sec: 8.0          # Maximum delay between attempts
       stop_on_no_change: true       # Stop if LLM returns no changes
       max_total_minutes: 5          # Maximum total time for refinement
+      
+      # Git diff integration settings
+      git_context:
+        enable: true                # Include git context in refinement
+        days_back: 7                # How many days back to look for changes
+        max_commits: 5              # Maximum number of recent commits to analyze
+        include_diff_content: false # Include actual diff content (uses more tokens)
+        analyze_changed_sources: true  # Analyze source files that might affect tests
+
+# =============================================================================
+# ENVIRONMENT DETECTION & MANAGEMENT
+# =============================================================================
+
+environment:
+  # Environment detection settings
+  auto_detect: true                  # Auto-detect current environment manager
+  preferred_manager: 'auto'          # 'poetry' | 'pipenv' | 'conda' | 'uv' | 'venv' | 'auto'
+  respect_virtual_env: true          # Always use current virtual env
+  dependency_validation: true        # Validate deps before running tests
+  
+  # Environment-specific overrides
+  overrides:
+    poetry:
+      use_poetry_run: true           # Use `poetry run pytest` instead of direct python
+      respect_poetry_venv: true
+    pipenv:
+      use_pipenv_run: true           # Use `pipenv run pytest`
+    conda:
+      activate_environment: true     # Ensure conda environment is active
+    uv:
+      use_uv_run: false             # Use direct python instead of `uv run`
 
 # =============================================================================
 # COST MANAGEMENT & OPTIMIZATION
@@ -329,6 +407,21 @@ prompt_engineering:
   minimize_xml_structure: true      # Reduce excessive XML tags in prompts
   decisive_recommendations: true    # Encourage single, strong recommendations
   preserve_uncertainty: false       # Include hedging language (usually false)
+
+# =============================================================================
+# TEST QUALITY ANALYSIS
+# =============================================================================
+
+quality:
+  # Quality analysis settings
+  enable_quality_analysis: true      # Enable quality analysis by default
+  enable_mutation_testing: true      # Enable mutation testing by default
+  minimum_quality_score: 75.0        # Minimum acceptable quality score (%)
+  minimum_mutation_score: 80.0       # Minimum acceptable mutation score (%)
+  max_mutants_per_file: 50           # Maximum mutants per file for performance
+  mutation_timeout: 30               # Timeout in seconds for mutation testing
+  display_detailed_results: true     # Show detailed quality analysis results
+  enable_pattern_analysis: true      # Enable failure pattern analysis for smart refinement
 
 # =============================================================================
 # USAGE EXAMPLES

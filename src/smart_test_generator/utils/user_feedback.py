@@ -614,6 +614,173 @@ class UserFeedback:
         
         self.console.print(Rule(style="dim"))
 
+    def quality_analysis_display(self, quality_reports: Dict[str, Any], project_root: Path = None):
+        """Display test quality analysis results in a beautiful format."""
+        if not quality_reports or self.quiet:
+            return
+            
+        self.console.print()
+        self.console.print(Rule("🎯 Test Quality Analysis", style="bright_magenta"))
+        
+        # Create overall summary
+        total_files = len(quality_reports)
+        all_scores = []
+        high_quality_files = 0
+        medium_quality_files = 0
+        low_quality_files = 0
+        
+        for report in quality_reports.values():
+            if hasattr(report, 'quality_report') and report.quality_report:
+                score = report.quality_report.overall_score
+                all_scores.append(score)
+                if score >= 85:
+                    high_quality_files += 1
+                elif score >= 70:
+                    medium_quality_files += 1
+                else:
+                    low_quality_files += 1
+        
+        if all_scores:
+            average_score = sum(all_scores) / len(all_scores)
+            
+            # Display overall summary
+            summary_content = []
+            summary_content.append(f"[bold bright_cyan]Files Analyzed:[/bold bright_cyan] {total_files}")
+            summary_content.append(f"[bold bright_green]Average Quality Score:[/bold bright_green] {average_score:.1f}%")
+            summary_content.append(f"[bold green]High Quality (85%+):[/bold green] {high_quality_files}")
+            summary_content.append(f"[bold yellow]Medium Quality (70-84%):[/bold yellow] {medium_quality_files}")
+            summary_content.append(f"[bold red]Needs Improvement (<70%):[/bold red] {low_quality_files}")
+            
+            # Color-code the border based on average quality
+            if average_score >= 85:
+                border_color = "bright_green"
+            elif average_score >= 70:
+                border_color = "yellow"
+            else:
+                border_color = "red"
+            
+            summary_panel = Panel(
+                "\n".join(summary_content),
+                title="[bold bright_white]📊 Quality Overview[/bold bright_white]",
+                border_style=border_color,
+                box=rich.box.ROUNDED,
+                padding=(1, 2),
+                title_align="left"
+            )
+            
+            self.console.print(summary_panel)
+            
+            # Display detailed quality breakdown table
+            if total_files > 0:
+                table = Table(
+                    title="📋 Detailed Quality Analysis",
+                    show_header=True,
+                    header_style="bold magenta",
+                    border_style="cyan"
+                )
+                table.add_column("Test File", style="bright_cyan", min_width=30)
+                table.add_column("Overall Score", style="bold", justify="center", width=12)
+                table.add_column("Edge Cases", style="green", justify="center", width=10)
+                table.add_column("Assertions", style="blue", justify="center", width=10)
+                table.add_column("Maintainability", style="yellow", justify="center", width=13)
+                table.add_column("Independence", style="magenta", justify="center", width=12)
+                table.add_column("Top Issue", style="dim white", min_width=25)
+                
+                for source_file, report in quality_reports.items():
+                    if hasattr(report, 'quality_report') and report.quality_report:
+                        quality_report = report.quality_report
+                        
+                        # Format file path
+                        if project_root:
+                            try:
+                                relative_path = str(Path(quality_report.test_file).relative_to(project_root))
+                            except ValueError:
+                                relative_path = str(Path(quality_report.test_file).name)
+                        else:
+                            relative_path = str(Path(quality_report.test_file).name)
+                        
+                        # Get overall score with color
+                        overall_score = quality_report.overall_score
+                        if overall_score >= 85:
+                            score_display = f"[bold green]{overall_score:.1f}%[/bold green]"
+                        elif overall_score >= 70:
+                            score_display = f"[bold yellow]{overall_score:.1f}%[/bold yellow]"
+                        else:
+                            score_display = f"[bold red]{overall_score:.1f}%[/bold red]"
+                        
+                        # Get dimension scores
+                        from smart_test_generator.models.data_models import QualityDimension
+                        edge_case_score = quality_report.get_score(QualityDimension.EDGE_CASE_COVERAGE)
+                        assertion_score = quality_report.get_score(QualityDimension.ASSERTION_STRENGTH)  
+                        maintainability_score = quality_report.get_score(QualityDimension.MAINTAINABILITY)
+                        independence_score = quality_report.get_score(QualityDimension.INDEPENDENCE)
+                        
+                        # Get top priority issue
+                        top_issue = "None"
+                        if quality_report.priority_fixes:
+                            top_issue = quality_report.priority_fixes[0][:40] + "..." if len(quality_report.priority_fixes[0]) > 40 else quality_report.priority_fixes[0]
+                        
+                        table.add_row(
+                            relative_path,
+                            score_display,
+                            f"{edge_case_score:.1f}%",
+                            f"{assertion_score:.1f}%", 
+                            f"{maintainability_score:.1f}%",
+                            f"{independence_score:.1f}%",
+                            top_issue
+                        )
+                
+                self.console.print()
+                self.console.print(table)
+                
+                # Show priority fixes and suggestions
+                all_priority_fixes = []
+                all_suggestions = []
+                
+                for report in quality_reports.values():
+                    if hasattr(report, 'quality_report') and report.quality_report:
+                        all_priority_fixes.extend(report.quality_report.priority_fixes)
+                        all_suggestions.extend(report.quality_report.improvement_suggestions)
+                
+                # Display priority fixes if any
+                if all_priority_fixes:
+                    self.console.print()
+                    fixes_content = []
+                    unique_fixes = list(dict.fromkeys(all_priority_fixes))  # Remove duplicates
+                    for i, fix in enumerate(unique_fixes[:5], 1):  # Show top 5
+                        fixes_content.append(f"[bold red]{i}.[/bold red] {fix}")
+                    
+                    fixes_panel = Panel(
+                        "\n".join(fixes_content),
+                        title="[bold bright_red]🚨 Priority Fixes Needed[/bold bright_red]",
+                        border_style="red",
+                        box=rich.box.ROUNDED,
+                        padding=(1, 2),
+                        title_align="left"
+                    )
+                    self.console.print(fixes_panel)
+                
+                # Display improvement suggestions
+                if all_suggestions and self.verbose:
+                    self.console.print()
+                    suggestions_content = []
+                    unique_suggestions = list(dict.fromkeys(all_suggestions))  # Remove duplicates
+                    for i, suggestion in enumerate(unique_suggestions[:3], 1):  # Show top 3
+                        suggestions_content.append(f"[bold blue]{i}.[/bold blue] {suggestion}")
+                    
+                    suggestions_panel = Panel(
+                        "\n".join(suggestions_content),
+                        title="[bold bright_blue]💡 Improvement Suggestions[/bold bright_blue]",
+                        border_style="blue",
+                        box=rich.box.ROUNDED,
+                        padding=(1, 2),
+                        title_align="left"
+                    )
+                    self.console.print(suggestions_panel)
+        
+        self.console.print()
+        self.console.print(Rule(style="dim"))
+
     def completion_celebration(self, title: str, stats: Dict[str, Any], duration: str = ""):
         """Display a celebratory completion summary."""
         # Always show completion, even in quiet mode

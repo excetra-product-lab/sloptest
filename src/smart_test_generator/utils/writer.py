@@ -7,6 +7,8 @@ from dataclasses import dataclass
 import os
 import tempfile
 import difflib
+import ast
+import re
 
 from smart_test_generator.config import Config
 from smart_test_generator.utils.ast_merge import merge_modules
@@ -58,9 +60,125 @@ class TestFileWriter:
             test_path = test_path.parent / test_filename
 
         return str(test_path)
+    
+    def _apply_class_splitting(self, test_content: str) -> str:
+        """Split test classes that exceed the maximum methods per class limit.
+        
+        Args:
+            test_content: Generated test content
+            
+        Returns:
+            Test content with classes split if necessary
+        """
+        max_methods = self.config.get('test_generation.generation.max_test_methods_per_class', 20)
+        
+        # If unlimited (0) or not configured, return original content
+        if max_methods <= 0:
+            return test_content
+            
+        try:
+            # Parse the test content
+            tree = ast.parse(test_content)
+            
+            # Find test classes that exceed the limit
+            modified = False
+            new_classes = []
+            
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ClassDef) and node.name.startswith('Test'):
+                    test_methods = [n for n in node.body if isinstance(n, ast.FunctionDef) and n.name.startswith('test_')]
+                    
+                    if len(test_methods) > max_methods:
+                        # Split the class
+                        split_classes = self._split_test_class(node, test_methods, max_methods)
+                        new_classes.extend(split_classes)
+                        modified = True
+                    else:
+                        new_classes.append(node)
+            
+            if modified:
+                # Rebuild the module with split classes
+                new_tree = ast.Module(body=[], type_ignores=[])
+                
+                # Add imports and other non-class nodes first
+                for node in tree.body:
+                    if not isinstance(node, ast.ClassDef) or not node.name.startswith('Test'):
+                        new_tree.body.append(node)
+                
+                # Add all classes (original + split)
+                new_tree.body.extend(new_classes)
+                
+                # Convert back to source code
+                import astor
+                return astor.to_source(new_tree)
+                
+        except Exception as e:
+            logger.warning(f"Failed to split test classes: {e}")
+            # Return original content if splitting fails
+            
+        return test_content
+    
+    def _split_test_class(self, class_node: ast.ClassDef, test_methods: List[ast.FunctionDef], max_methods: int) -> List[ast.ClassDef]:
+        """Split a test class into multiple classes.
+        
+        Args:
+            class_node: The original test class AST node
+            test_methods: List of test method nodes
+            max_methods: Maximum methods per class
+            
+        Returns:
+            List of split test class nodes
+        """
+        split_classes = []
+        
+        # Group methods into batches
+        method_batches = []
+        for i in range(0, len(test_methods), max_methods):
+            method_batches.append(test_methods[i:i + max_methods])
+        
+        # Create split classes
+        for i, method_batch in enumerate(method_batches):
+            if i == 0:
+                # First class keeps the original name
+                class_name = class_node.name
+            else:
+                # Additional classes get numbered suffix
+                class_name = f"{class_node.name}Part{i + 1}"
+                
+            # Create new class with subset of methods
+            new_class = ast.ClassDef(
+                name=class_name,
+                bases=class_node.bases,
+                keywords=class_node.keywords,
+                decorator_list=class_node.decorator_list,
+                body=[],
+                lineno=class_node.lineno,
+                col_offset=class_node.col_offset
+            )
+            
+            # Add non-test methods and setup/teardown methods to each class
+            for node in class_node.body:
+                if isinstance(node, ast.FunctionDef):
+                    if (node.name in ['setUp', 'tearDown', 'setup_method', 'teardown_method'] or
+                        node.name.startswith('_') or  # private/helper methods
+                        not node.name.startswith('test_')):  # non-test methods
+                        new_class.body.append(node)
+                else:
+                    # Class variables, docstrings, etc.
+                    new_class.body.append(node)
+            
+            # Add the batch of test methods
+            new_class.body.extend(method_batch)
+            
+            split_classes.append(new_class)
+        
+        return split_classes
 
     def write_test_file(self, source_path: str, test_content: str):
         """Write test content to appropriate file."""
+        # Apply class splitting if configured
+        test_content = self._apply_class_splitting(test_content)
+        
         test_path = self.determine_test_path(source_path)
         full_test_path = self.root_dir / test_path
 
@@ -108,7 +226,7 @@ class TestFileWriter:
         source_path: str,
         new_source: str,
         *,
-        strategy: str = 'append',
+        strategy: str = 'ast-merge',
         dry_run: bool = False,
     ) -> 'MergeResult':
         """Write or merge test content according to configured strategy.
@@ -146,11 +264,22 @@ class TestFileWriter:
             output_text = new_source
             actions = ["replace"] if existing_text else ["create"]
         else:
-            # Default/fallback to append
-            separator = "\n\n" if existing_text and not existing_text.endswith("\n\n") else "\n\n"
-            output_text = (existing_text + separator + new_source) if existing_text else new_source
-            actions = ["append"] if existing_text else ["create"]
-            strategy = 'append' if strategy not in ('append', 'replace', 'ast-merge') else strategy
+            # Default/fallback to ast-merge (changed from append)
+            if strategy not in ('append', 'replace', 'ast-merge'):
+                # Unknown strategy, fallback to ast-merge
+                merged_text, merge_actions = merge_modules(existing_text, new_source)
+                output_text = merged_text
+                actions = merge_actions or ["merge"]
+                strategy = 'ast-merge'
+            elif strategy == 'append':
+                separator = "\n\n" if existing_text and not existing_text.endswith("\n\n") else "\n\n"
+                output_text = (existing_text + separator + new_source) if existing_text else new_source
+                actions = ["append"] if existing_text else ["create"]
+            else:
+                # This should not happen with current logic, but keep as fallback
+                separator = "\n\n" if existing_text and not existing_text.endswith("\n\n") else "\n\n"
+                output_text = (existing_text + separator + new_source) if existing_text else new_source
+                actions = ["append"] if existing_text else ["create"]
 
         # Optional formatting via Black
         try:

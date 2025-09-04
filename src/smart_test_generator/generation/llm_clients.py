@@ -11,6 +11,7 @@ from typing import Dict, List, Set
 from pathlib import Path
 
 from smart_test_generator.exceptions import LLMClientError, AuthenticationError
+from smart_test_generator.utils.prompt_loader import get_prompt_loader
 
 try:
     from langchain_aws import ChatBedrock
@@ -178,138 +179,22 @@ def extract_codebase_imports(source_files: List[str], project_root: str) -> Dict
 
 def get_legacy_system_prompt() -> str:
     """Get the legacy system prompt for test generation (pre-2025 guidelines)."""
-    return """You are an expert Python test generation assistant. You excel at creating comprehensive, runnable unit tests that follow best practices.
-
-<task>
-Analyze Python code files provided in XML format and generate complete unit test files for each one.
-</task>
-
-<requirements>
-<testing_framework>pytest</testing_framework>
-<coverage_target>aim for 80%+ code coverage</coverage_target>
-<test_independence>tests must run in any order without dependencies</test_independence>
-</requirements>
-
-<test_structure>
-- Use meaningful test names that describe the scenario being tested
-- Add clear docstrings explaining what each test verifies
-- Group related tests in test classes when appropriate
-- Include proper imports and fixtures
-- Test happy paths, edge cases, and error conditions
-- Use parametrize for testing multiple scenarios with different inputs
-- Mock external dependencies appropriately
-- Handle async functions with pytest-asyncio when needed
-</test_structure>
-
-<code_quality>
-- Write clean, readable test code
-- Use specific assertions with clear error messages
-- Follow the same code style as the source project
-- Structure test files to mirror source code organization
-</code_quality>
-
-<data_handling>
-When creating instances of classes from the codebase:
-- Check the AVAILABLE_IMPORTS section for valid class/function names
-- Review CLASS_SIGNATURES for required constructor parameters
-- Provide ALL required fields when instantiating dataclasses or classes
-</data_handling>
-
-<mock_configuration>
-Configure mocks properly to avoid runtime errors:
-- Set mock.return_value = [] for methods that should return lists
-- Use mock.get.return_value = [] for config objects that return lists
-- Import unittest.mock.ANY when using ANY in assertions
-</mock_configuration>
-
-<output_format>
-Return a valid JSON object where:
-- Keys are relative file paths matching the filepath attribute in the XML
-- Values are complete test file contents as properly escaped strings
-- Use \\n for newlines, \\" for quotes, \\\\ for backslashes, \\t for tabs
-- Include all necessary imports and dependencies
-- Return ONLY the JSON object with no additional text or markdown
-</output_format>
-
-<example_structure>
-{
-  "src/models/user.py": "import pytest\\nfrom unittest.mock import Mock\\n\\nclass TestUser:\\n    def test_creation(self):\\n        \\\"\\\"\\\"Test user creation with valid data.\\\"\\\"\\\"\\n        # Test implementation here\\n        pass"
-}
-</example_structure>"""
+    prompt_loader = get_prompt_loader()
+    return prompt_loader.get_system_prompt(extended_thinking=False, use_legacy=True)
 
 
 def get_system_prompt(config: 'Config' = None, extended_thinking: bool = False) -> str:
     """Get the system prompt for test generation."""
+    prompt_loader = get_prompt_loader()
+    
     # Check if we should use 2025 guidelines (default: True)
-    if config and not config.get('prompt_engineering.use_2025_guidelines', True):
-        return get_legacy_system_prompt()
-
-    base_prompt = """You are an expert Python test generator. Create comprehensive, runnable pytest tests that follow best practices."""
-
-    if extended_thinking:
-        base_prompt += """
-
-EXTENDED THINKING MODE:
-You have additional thinking capacity to thoroughly analyze code before generating tests.
-Take full advantage of this by:
-- Deeply analyzing the code structure and dependencies
-- Considering complex interaction patterns and edge cases
-- Planning comprehensive test coverage that catches subtle bugs
-- Designing tests that validate both expected and unexpected behaviors
-- Thinking through potential failure modes and error conditions systematically"""
-
-    base_prompt += """
-
-APPROACH:
-Think step-by-step before writing tests:
-1. Analyze the code structure and identify testable elements
-2. Determine test scenarios (happy path, edge cases, errors)
-3. Plan assertions that would fail if code behavior changes
-4. Write the complete test file
-
-REQUIREMENTS:
-- Framework: pytest
-- Target: 80%+ coverage
-- Independence: tests run in any order
-- Style: match existing project patterns
-
-GOOD TEST CHARACTERISTICS:
-✓ Descriptive names: test_calculates_compound_interest_for_monthly_compounding()
-✓ Specific assertions: assert result == 1050.0, not assert result > 0
-✓ Edge cases: empty inputs, None values, boundary conditions
-✓ Error scenarios: invalid inputs raise expected exceptions
-✓ Clear arrange-act-assert structure
-✓ Proper mocking of external dependencies
-
-POOR TEST CHARACTERISTICS:
-✗ Generic names: test_function()
-✗ Weak assertions: assert result is not None
-✗ Missing edge cases
-✗ No error condition testing
-✗ Tests that depend on execution order
-✗ Unmocked external calls
-
-DATA HANDLING:
-- Check AVAILABLE_IMPORTS for valid imports
-- Review CLASS_SIGNATURES for constructor parameters
-- Provide ALL required fields for dataclasses/classes
-- Mock external dependencies properly
-
-MOCK SETUP:
-Configure mocks to prevent runtime errors:
-- Set mock.return_value = [] for list-returning methods
-- Use mock.get.return_value = [] for config objects
-- Import unittest.mock.ANY when using ANY in assertions
-
-OUTPUT FORMAT:
-Return only a valid JSON object:
-{
-  "relative/path/to/source.py": "import pytest\\nfrom unittest.mock import Mock\\n\\nclass TestExample:\\n    def test_specific_behavior(self):\\n        \\\"\\\"\\\"Test that X does Y when Z.\\\"\\\"\\\"\\n        # Arrange\\n        # Act\\n        # Assert\\n        pass"
-}
-
-Use proper JSON escaping: \\n for newlines, \\" for quotes, \\\\ for backslashes."""
-
-    return base_prompt
+    use_legacy = config and not config.get('prompt_engineering.use_2025_guidelines', True)
+    
+    return prompt_loader.get_system_prompt(
+        extended_thinking=extended_thinking, 
+        use_legacy=use_legacy,
+        config=config
+    )
 
 
 class LLMClient(ABC):
@@ -358,27 +243,22 @@ class LLMClient(ABC):
         if not codebase_info:
             return ""
         
-        return f"""
-
-AVAILABLE_IMPORTS (Only use these - never import non-existent classes):
-{json.dumps(codebase_info.get('imports', {}), indent=2)}
-
-CLASS_SIGNATURES (Required fields for dataclasses):
-{json.dumps(codebase_info.get('classes', {}), indent=2)}"""
+        prompt_loader = get_prompt_loader()
+        return prompt_loader.get_validation_context(
+            imports=codebase_info.get('imports', {}),
+            classes=codebase_info.get('classes', {})
+        )
 
     def _build_user_content(self, xml_content: str, directory_structure: str, codebase_info: Dict) -> str:
         """Build user content for LLM request."""
         validation_context = self._build_validation_context(codebase_info)
         
-        return f"""<directory_structure>
-{directory_structure}
-</directory_structure>
-
-<code_files>
-{xml_content}
-</code_files>{validation_context}
-
-Generate comprehensive unit tests for each file in the code_files section above."""
+        prompt_loader = get_prompt_loader()
+        return prompt_loader.get_user_content_template(
+            directory_structure=directory_structure,
+            xml_content=xml_content,
+            validation_context=validation_context
+        )
 
     def _log_verbose_prompt(self, model_name: str, system_prompt: str, user_content: str, file_count: int):
         """Log verbose prompt information if feedback is available."""
@@ -599,7 +479,8 @@ Generate comprehensive unit tests for each file in the code_files section above.
 class BedrockClient(LLMClient):
     """Client for interacting with AWS Bedrock using langchain-aws ChatBedrock with STS assume-role."""
 
-    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", cost_manager=None, feedback=None):
+    def __init__(self, *, role_arn: str, inference_profile: str, region: str = "us-east-1", 
+                 extended_thinking: bool = False, cost_manager=None, feedback=None, config=None):
         if boto3 is None:
             raise LLMClientError(
                 "boto3 is not installed",
@@ -614,8 +495,9 @@ class BedrockClient(LLMClient):
         self.region = region
         self.cost_manager = cost_manager
         self.inference_profile = inference_profile
+        self.extended_thinking = extended_thinking
         self.feedback = feedback
-
+        self.config = config
         # Assume role to obtain temporary credentials
         try:
             base_session = boto3.Session(region_name=region)
@@ -791,36 +673,23 @@ class BedrockClient(LLMClient):
             })
 
         # Create system prompt for refinement with extended thinking if enabled
-        if self.extended_thinking:
-            system_prompt = """You are a senior Python testing engineer specializing in fixing failing tests.
-
-EXTENDED THINKING MODE:
-You have additional thinking capacity to thoroughly analyze test failures and design comprehensive fixes.
-Take full advantage of this by:
-- Deeply analyzing failure patterns and root causes
-- Considering complex interaction effects and dependencies
-- Planning systematic fixes that address both symptoms and underlying issues
-- Designing comprehensive solutions that prevent similar failures
-- Thinking through potential side effects and edge cases in your fixes
-
-Analyze test failures and provide targeted fixes that maintain test quality and coverage."""
-        else:
-            system_prompt = "You are a senior Python testing engineer specializing in fixing failing tests. Analyze test failures and provide targeted fixes that maintain test quality and coverage."
+        prompt_loader = get_prompt_loader()
+        system_prompt = prompt_loader.get_refinement_prompt(extended_thinking=self.extended_thinking, config=self.config)
 
         # Prepare the user content with refinement context
-        user_content = f"""# Test Refinement Request
-
-{prompt}
-
-## Context
-- Run ID: {payload.get('run_id', 'unknown')}
-- Project: {payload.get('repo_meta', {}).get('branch', 'unknown branch')}
-- Environment: {payload.get('environment', {}).get('python', 'unknown')} on {payload.get('environment', {}).get('platform', 'unknown')}
-
-## Test Generation Summary
-- Tests written: {len(payload.get('tests_written', []))} files
-- Last command: {' '.join(payload.get('last_run_command', []))}
-- Total failures: {payload.get('failures_total', 0)}"""
+        user_content = prompt_loader.get_refinement_user_content(
+            prompt=prompt,
+            run_id=payload.get('run_id', 'unknown'),
+            branch=payload.get('repo_meta', {}).get('branch', 'unknown branch'),
+            commit=payload.get('repo_meta', {}).get('commit', 'unknown')[:8] if len(payload.get('repo_meta', {}).get('commit', 'unknown')) > 8 else payload.get('repo_meta', {}).get('commit', 'unknown'),  # Short commit hash
+            python_version=payload.get('environment', {}).get('python', 'unknown'),
+            platform=payload.get('environment', {}).get('platform', 'unknown'),
+            tests_written_count=len(payload.get('tests_written', [])),
+            last_run_command=' '.join(payload.get('last_run_command', [])),
+            failures_total=payload.get('failures_total', 0),
+            repo_meta=payload.get('repo_meta', {}),
+            failure_analysis=payload.get('failure_analysis', {})
+        )
 
         # Calculate token allocation for refinement
         failure_count = len(payload.get("failures", []))
@@ -900,8 +769,16 @@ Analyze test failures and provide targeted fixes that maintain test quality and 
                     logger.error("Bedrock returned empty or non-JSON content for refinement")
                     logger.debug(f"Full response: {repr(content)}")
 
-                # Try to recover partial results
-                return self._try_recover_partial_results(json_content, e)
+                # Try to recover partial results for refinement
+                recovered_results = self._try_recover_partial_results(json_content, e)
+                # Convert to proper refinement format if needed
+                if not isinstance(recovered_results, dict) or "updated_files" not in recovered_results:
+                    recovered_results = {
+                        "updated_files": [],
+                        "rationale": "Failed to recover refinement results from malformed JSON",
+                        "plan": "JSON parsing error occurred during recovery"
+                    }
+                return json.dumps(recovered_results)
 
         except (BotoCoreError, NoCredentialsError) as e:
             raise AuthenticationError(
@@ -930,13 +807,16 @@ Analyze test failures and provide targeted fixes that maintain test quality and 
 class AzureOpenAIClient(LLMClient):
     """Client for interacting with Azure OpenAI."""
 
-    def __init__(self, endpoint: str, api_key: str, deployment_name: str, cost_manager=None, feedback=None):
+    def __init__(self, endpoint: str, api_key: str, deployment_name: str, extended_thinking: bool = False, 
+                 cost_manager=None, feedback=None, config=None):
         self.endpoint = endpoint
         self.api_key = api_key
         self.deployment_name = deployment_name
         self.api_version = "2024-10-21"
+        self.extended_thinking = extended_thinking
         self.cost_manager = cost_manager
         self.feedback = feedback
+        self.config = config
 
     def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
@@ -1004,36 +884,23 @@ class AzureOpenAIClient(LLMClient):
         }
 
         # Create system prompt for refinement with extended thinking if enabled
-        if self.extended_thinking:
-            system_prompt = """You are a senior Python testing engineer specializing in fixing failing tests.
-
-EXTENDED THINKING MODE:
-You have additional thinking capacity to thoroughly analyze test failures and design comprehensive fixes.
-Take full advantage of this by:
-- Deeply analyzing failure patterns and root causes
-- Considering complex interaction effects and dependencies
-- Planning systematic fixes that address both symptoms and underlying issues
-- Designing comprehensive solutions that prevent similar failures
-- Thinking through potential side effects and edge cases in your fixes
-
-Analyze test failures and provide targeted fixes that maintain test quality and coverage."""
-        else:
-            system_prompt = "You are a senior Python testing engineer specializing in fixing failing tests. Analyze test failures and provide targeted fixes that maintain test quality and coverage."
+        prompt_loader = get_prompt_loader()
+        system_prompt = prompt_loader.get_refinement_prompt(extended_thinking=self.extended_thinking)
 
         # Prepare the user content with refinement context
-        user_content = f"""# Test Refinement Request
-
-{prompt}
-
-## Context
-- Run ID: {payload.get('run_id', 'unknown')}
-- Project: {payload.get('repo_meta', {}).get('branch', 'unknown branch')}
-- Environment: {payload.get('environment', {}).get('python', 'unknown')} on {payload.get('environment', {}).get('platform', 'unknown')}
-
-## Test Generation Summary
-- Tests written: {len(payload.get('tests_written', []))} files
-- Last command: {' '.join(payload.get('last_run_command', []))}
-- Total failures: {payload.get('failures_total', 0)}"""
+        user_content = prompt_loader.get_refinement_user_content(
+            prompt=prompt,
+            run_id=payload.get('run_id', 'unknown'),
+            branch=payload.get('repo_meta', {}).get('branch', 'unknown branch'),
+            commit=payload.get('repo_meta', {}).get('commit', 'unknown')[:8] if len(payload.get('repo_meta', {}).get('commit', 'unknown')) > 8 else payload.get('repo_meta', {}).get('commit', 'unknown'),  # Short commit hash
+            python_version=payload.get('environment', {}).get('python', 'unknown'),
+            platform=payload.get('environment', {}).get('platform', 'unknown'),
+            tests_written_count=len(payload.get('tests_written', [])),
+            last_run_command=' '.join(payload.get('last_run_command', [])),
+            failures_total=payload.get('failures_total', 0),
+            repo_meta=payload.get('repo_meta', {}),
+            failure_analysis=payload.get('failure_analysis', {})
+        )
 
         # Calculate token allocation for refinement
         failure_count = len(payload.get("failures", []))
@@ -1128,7 +995,7 @@ class ClaudeAPIClient(LLMClient):
     """Client for interacting with Claude API directly."""
 
     def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514", extended_thinking: bool = False,
-                 thinking_budget: int = 4096, cost_manager=None, feedback=None):
+                 thinking_budget: int = 4096, cost_manager=None, feedback=None, config=None):
         self.api_key = api_key
         self.model = model
         self.extended_thinking = extended_thinking
@@ -1136,6 +1003,7 @@ class ClaudeAPIClient(LLMClient):
         self.api_url = "https://api.anthropic.com/v1/messages"
         self.cost_manager = cost_manager
         self.feedback = feedback
+        self.config = config
 
     def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str, 
                            source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
@@ -1151,7 +1019,7 @@ class ClaudeAPIClient(LLMClient):
         user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
 
         # Get system prompt with extended thinking instructions if enabled
-        system_prompt = get_system_prompt(config=None, extended_thinking=self.extended_thinking)
+        system_prompt = get_system_prompt(config=self.config, extended_thinking=self.extended_thinking)
 
         # Calculate content size
         total_content = system_prompt + user_content
@@ -1371,36 +1239,23 @@ class ClaudeAPIClient(LLMClient):
         }
 
         # Create system prompt for refinement with extended thinking if enabled
-        if self.extended_thinking:
-            system_prompt = """You are a senior Python testing engineer specializing in fixing failing tests.
-
-EXTENDED THINKING MODE:
-You have additional thinking capacity to thoroughly analyze test failures and design comprehensive fixes.
-Take full advantage of this by:
-- Deeply analyzing failure patterns and root causes
-- Considering complex interaction effects and dependencies
-- Planning systematic fixes that address both symptoms and underlying issues
-- Designing comprehensive solutions that prevent similar failures
-- Thinking through potential side effects and edge cases in your fixes
-
-Analyze test failures and provide targeted fixes that maintain test quality and coverage."""
-        else:
-            system_prompt = "You are a senior Python testing engineer specializing in fixing failing tests. Analyze test failures and provide targeted fixes that maintain test quality and coverage."
+        prompt_loader = get_prompt_loader()
+        system_prompt = prompt_loader.get_refinement_prompt(extended_thinking=self.extended_thinking)
 
         # Prepare the user content with refinement context
-        user_content = f"""# Test Refinement Request
-
-{prompt}
-
-## Context
-- Run ID: {payload.get('run_id', 'unknown')}
-- Project: {payload.get('repo_meta', {}).get('branch', 'unknown branch')}
-- Environment: {payload.get('environment', {}).get('python', 'unknown')} on {payload.get('environment', {}).get('platform', 'unknown')}
-
-## Test Generation Summary
-- Tests written: {len(payload.get('tests_written', []))} files
-- Last command: {' '.join(payload.get('last_run_command', []))}
-- Total failures: {payload.get('failures_total', 0)}"""
+        user_content = prompt_loader.get_refinement_user_content(
+            prompt=prompt,
+            run_id=payload.get('run_id', 'unknown'),
+            branch=payload.get('repo_meta', {}).get('branch', 'unknown branch'),
+            commit=payload.get('repo_meta', {}).get('commit', 'unknown')[:8] if len(payload.get('repo_meta', {}).get('commit', 'unknown')) > 8 else payload.get('repo_meta', {}).get('commit', 'unknown'),  # Short commit hash
+            python_version=payload.get('environment', {}).get('python', 'unknown'),
+            platform=payload.get('environment', {}).get('platform', 'unknown'),
+            tests_written_count=len(payload.get('tests_written', [])),
+            last_run_command=' '.join(payload.get('last_run_command', [])),
+            failures_total=payload.get('failures_total', 0),
+            repo_meta=payload.get('repo_meta', {}),
+            failure_analysis=payload.get('failure_analysis', {})
+        )
 
         # Calculate token allocation for refinement
         failure_count = len(payload.get("failures", []))
@@ -1493,8 +1348,16 @@ Analyze test failures and provide targeted fixes that maintain test quality and 
                     logger.error("The AI returned empty or non-JSON content for refinement")
                     logger.debug(f"Full original response: {repr(content)}")
 
-                # Try to recover partial results
-                return self._try_recover_partial_results(json_content, e)
+                # Try to recover partial results for refinement
+                recovered_results = self._try_recover_partial_results(json_content, e)
+                # Convert to proper refinement format if needed
+                if not isinstance(recovered_results, dict) or "updated_files" not in recovered_results:
+                    recovered_results = {
+                        "updated_files": [],
+                        "rationale": "Failed to recover refinement results from malformed JSON",
+                        "plan": "JSON parsing error occurred during recovery"
+                    }
+                return json.dumps(recovered_results)
 
         except requests.exceptions.HTTPError as e:
             status_code = e.response.status_code if e.response else None

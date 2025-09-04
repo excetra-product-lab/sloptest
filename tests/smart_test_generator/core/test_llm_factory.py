@@ -38,7 +38,7 @@ class TestLLMClientFactory:
         # Assert
         mock_validator.validate_api_key.assert_called_once_with(api_key, "Claude")
         mock_validator.validate_model_name.assert_called_once()
-        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=False, thinking_budget=4096, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback)
+        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=False, thinking_budget=4096, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback, config=None)
         self.mock_feedback.info.assert_called_once_with(f"Using Claude API with model: {model}")
         assert result == mock_client_instance
         
@@ -63,7 +63,7 @@ class TestLLMClientFactory:
         
         # Assert
         mock_validator.validate_api_key.assert_called_once_with(env_key, "Claude")
-        mock_claude_client.assert_called_once_with(env_key, model, extended_thinking=False, thinking_budget=4096, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback)
+        mock_claude_client.assert_called_once_with(env_key, model, extended_thinking=False, thinking_budget=4096, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback, config=None)
         assert result == mock_client_instance
         
     @patch('smart_test_generator.core.llm_factory.Validator')
@@ -89,7 +89,7 @@ class TestLLMClientFactory:
         
         # Assert
         mock_validator.validate_api_key.assert_called_once_with(api_key, "Azure OpenAI")
-        mock_azure_client.assert_called_once_with(endpoint, api_key, deployment, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback)
+        mock_azure_client.assert_called_once_with(endpoint, api_key, deployment, extended_thinking=False, cost_manager=self.mock_cost_manager, feedback=self.mock_feedback, config=None)
         self.mock_feedback.info.assert_called_once_with("Using Azure OpenAI")
         assert result == mock_client_instance
         
@@ -219,7 +219,7 @@ class TestLLMClientFactory:
         )
         
         # Assert
-        mock_claude_client.assert_called_once_with(api_key, custom_model, extended_thinking=False, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback)
+        mock_claude_client.assert_called_once_with(api_key, custom_model, extended_thinking=False, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback, config=None)
         self.mock_feedback.info.assert_called_once_with(f"Using Claude API with model: {custom_model}")
         
     @patch('smart_test_generator.core.llm_factory.Validator')
@@ -267,7 +267,7 @@ class TestLLMClientFactory:
         )
 
         # Assert
-        mock_claude_client.assert_called_once_with(api_key, "claude-sonnet-4-20250514", extended_thinking=False, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback)
+        mock_claude_client.assert_called_once_with(api_key, "claude-sonnet-4-20250514", extended_thinking=False, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback, config=None)
 
     @patch('smart_test_generator.core.llm_factory.Validator')
     @patch('smart_test_generator.core.llm_factory.ClaudeAPIClient')
@@ -291,7 +291,7 @@ class TestLLMClientFactory:
         )
 
         # Assert
-        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=True, thinking_budget=thinking_budget, cost_manager=None, feedback=self.mock_feedback)
+        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=True, thinking_budget=thinking_budget, cost_manager=None, feedback=self.mock_feedback, config=None)
         self.mock_feedback.info.assert_called_once_with(f"Using Claude API with model: {model} (extended thinking enabled, budget: {thinking_budget} tokens)")
         assert result == mock_client_instance
 
@@ -355,5 +355,5 @@ class TestLLMClientFactory:
         )
 
         # Assert
-        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=True, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback)
+        mock_claude_client.assert_called_once_with(api_key, model, extended_thinking=True, thinking_budget=4096, cost_manager=None, feedback=self.mock_feedback, config=None)
         assert result == mock_client_instance

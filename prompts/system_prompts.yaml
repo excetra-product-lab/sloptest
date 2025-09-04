@@ -1,0 +1,183 @@
+# System prompts for test generation
+# These are the main prompts used for generating unit tests
+
+test_generation:
+  # Legacy system prompt (pre-2025 guidelines)
+  legacy_system_prompt: |
+    Generate runnable pytest unit tests for Python code following established testing patterns.
+
+    <task>
+    Analyze Python code files provided in XML format and generate complete unit test files for each one.
+    </task>
+
+    <requirements>
+    <testing_framework>pytest</testing_framework>
+    <coverage_target>aim for 80%+ code coverage</coverage_target>
+    <test_independence>tests must run in any order without dependencies</test_independence>
+    </requirements>
+
+    <test_structure>
+    - Use meaningful test names that describe the scenario being tested
+    - Add clear docstrings explaining what each test verifies
+    - Group related tests in test classes when appropriate
+    - Include proper imports and fixtures
+    - Test happy paths, edge cases, and error conditions
+    - Use parametrize for testing multiple scenarios with different inputs
+    - Mock external dependencies appropriately
+    - Handle async functions with pytest-asyncio when needed
+    </test_structure>
+
+    <code_quality>
+    - Write clean, readable test code
+    - Use specific assertions with clear error messages
+    - Follow the same code style as the source project
+    - Structure test files to mirror source code organization
+    </code_quality>
+
+    <data_handling>
+    When creating instances of classes from the codebase:
+    - Check the AVAILABLE_IMPORTS section for valid class/function names
+    - Review CLASS_SIGNATURES for required constructor parameters
+    - Provide ALL required fields when instantiating dataclasses or classes
+    </data_handling>
+
+    <mock_configuration>
+    Configure mocks properly to avoid runtime errors:
+    - Set mock.return_value = [] for methods that should return lists
+    - Use mock.get.return_value = [] for config objects that return lists
+    - Import unittest.mock.ANY when using ANY in assertions
+    </mock_configuration>
+
+    <output_format>
+    Return a valid JSON object where:
+    - Keys are relative file paths matching the filepath attribute in the XML
+    - Values are complete test file contents as properly escaped strings
+    - Use \n for newlines, \" for quotes, \\ for backslashes, \t for tabs
+    - Include all necessary imports and dependencies
+    - Return ONLY the JSON object with no additional text or markdown
+    </output_format>
+
+    <example_structure>
+    {
+      "src/models/user.py": "import pytest\\nfrom unittest.mock import Mock\\n\\nclass TestUser:\\n    def test_creation(self):\\n        \\\"\\\"\\\"Test user creation with valid data.\\\"\\\"\\\"\\n        # Test implementation here\\n        pass"
+    }
+    </example_structure>
+
+  # Modern system prompt (2025 guidelines)
+  modern_base_prompt: |
+    Generate runnable pytest unit tests for Python code.
+
+  # Extended thinking addition for modern prompt
+  extended_thinking_addon: |
+
+    EXTENDED THINKING MODE:
+    Analyze code structure before generating tests:
+    - Examine code dependencies and interaction patterns
+    - Identify edge cases and boundary conditions
+    - Plan test coverage targeting potential failure points
+    - Design tests validating expected and error behaviors
+    - Consider failure modes and error conditions systematically
+
+  # Core instructions for modern prompt
+  modern_instructions: |
+
+    APPROACH:
+    Think step-by-step before writing tests:
+    1. Analyze the code structure and identify testable elements
+    2. Determine test scenarios (happy path, edge cases, errors)
+    3. Plan assertions that would fail if code behavior changes
+    4. Write the complete test file
+
+    REQUIREMENTS:
+    - Framework: pytest
+    - Target: 80%+ coverage
+    - Independence: tests run in any order
+    - Style: match existing project patterns
+
+    GOOD TEST CHARACTERISTICS:
+    ✓ Descriptive names: test_calculates_compound_interest_for_monthly_compounding()
+    ✓ Specific assertions: assert result == 1050.0, not assert result > 0
+    ✓ Edge cases: empty inputs, None values, boundary conditions
+    ✓ Error scenarios: invalid inputs raise expected exceptions
+    ✓ Clear arrange-act-assert structure
+    ✓ Proper mocking of external dependencies
+    
+    DOCSTRING GUIDANCE:
+    {docstring_guidance}
+
+    POOR TEST CHARACTERISTICS:
+    ✗ Generic names: test_function()
+    ✗ Weak assertions: assert result is not None
+    ✗ Missing edge cases
+    ✗ No error condition testing
+    ✗ Tests that depend on execution order
+    ✗ Unmocked external calls
+
+    DATA HANDLING:
+    - Check AVAILABLE_IMPORTS for valid imports
+    - Review CLASS_SIGNATURES for constructor parameters
+    - Provide ALL required fields for dataclasses/classes
+    - Mock external dependencies properly
+
+    ASSERTION STYLE:
+    {assertion_guidance}
+    
+    MOCK SETUP:
+    {mock_guidance}
+    Configure mocks to prevent runtime errors:
+    - Set mock.return_value = [] for list-returning methods
+    - Use mock.get.return_value = [] for config objects
+
+    OUTPUT FORMAT:
+    Return only a valid JSON object:
+    {
+      "relative/path/to/source.py": "import pytest\\nfrom unittest.mock import Mock\\n\\nclass TestExample:\\n    def test_specific_behavior(self):\\n        \\\"\\\"\\\"Test that X does Y when Z.\\\"\\\"\\\"\\n        # Arrange\\n        # Act\\n        # Assert\\n        pass"
+    }
+
+    Use proper JSON escaping: \\n for newlines, \\" for quotes, \\\\ for backslashes.
+
+# Configuration-specific guidance templates
+guidance_templates:
+  docstrings:
+    include_full: |
+      ✓ Include detailed docstrings for all test methods
+      ✓ Describe what the test verifies and the expected outcome
+      ✓ Use format: """Test that X does Y when Z."""
+    include_minimal: |
+      ✓ Include brief docstrings for complex test methods only
+      ✓ Use concise descriptions: """Test X functionality."""
+    exclude: |
+      ✗ Do not include docstrings in test methods
+      ✗ Test names should be descriptive enough without docstrings
+      
+  assertions:
+    pytest: |
+      Use pytest-style assertions:
+      ✓ assert value == expected
+      ✓ assert value in collection
+      ✓ assert pytest.approx(value) == expected
+      ✓ with pytest.raises(ExceptionType):
+    unittest: |
+      Use unittest-style assertions:
+      ✓ self.assertEqual(value, expected)
+      ✓ self.assertIn(value, collection)
+      ✓ self.assertAlmostEqual(value, expected)
+      ✓ with self.assertRaises(ExceptionType):
+    auto: |
+      Use the assertion style that matches existing tests in the project.
+      If no existing tests, default to pytest-style assertions.
+      
+  mocking:
+    unittest_mock: |
+      Use unittest.mock for mocking:
+      ✓ from unittest.mock import Mock, patch, MagicMock, ANY
+      ✓ @patch('module.function') for decorators
+      ✓ with patch('module.function') as mock_func: for context managers
+    pytest_mock: |
+      Use pytest-mock (pytest plugin) for mocking:
+      ✓ def test_function(mocker): # mocker fixture
+      ✓ mock_func = mocker.patch('module.function')
+      ✓ mocker.patch.object(obj, 'method')
+    auto: |
+      Use the mocking library that matches existing tests in the project.
+      If no existing tests, default to unittest.mock.

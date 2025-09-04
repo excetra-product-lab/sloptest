@@ -1,42 +1,73 @@
 test_generation:
-  coverage:
-    minimum_branch_coverage: 70
-    minimum_line_coverage: 80
-    regenerate_if_below: 60
+  # Test file discovery patterns
+  test_patterns:
+  - test_*.py
+  - '*_test.py'
+  - tests/**/test_*.py
+  
+  # Files and patterns to exclude from test generation
   exclude:
   - migrations/*
   - '*/deprecated/*'
   - __pycache__/*
   - '*.pyc'
+  
+  # Directories to exclude from scanning (add your custom exclusions here)
   exclude_dirs:
   - my_custom_venv
   - local_build
-  generation:
-    always_analyze_new_files: true
-    generate_fixtures: true
-    include_docstrings: true
-    max_test_methods_per_class: 20
-    parametrize_similar_tests: true
+  
+  # Test generation style
   style:
-    assertion_style: assert
     framework: pytest
-    mock_library: unittest.mock
-  test_patterns:
-  - test_*.py
-  - '*_test.py'
-  - tests/**/test_*.py
+  
+  # Coverage analysis settings
+  coverage:
+    minimum_line_coverage: 80
+    regenerate_if_below: 60
+  
+  # Test generation behavior (most options can be left at defaults)
+  generation:
+    # Enable post-generation test runner
+    test_runner:
+      enable: false                 # Set to true to automatically run pytest after generation
+      
+# Environment detection and management
+environment:
+  auto_detect: true                 # Auto-detect current environment manager
+  preferred_manager: 'auto'         # 'poetry' | 'pipenv' | 'conda' | 'uv' | 'venv' | 'auto'
+  respect_virtual_env: true         # Always use current virtual env
 
-# Prompt Engineering Settings (Based on Anthropic 2025 Guidelines)
-prompt_engineering:
-  use_2025_guidelines: true          # Use improved prompts following Anthropic's latest best practices
-  encourage_step_by_step: true       # Include step-by-step reasoning prompts
-  use_positive_negative_examples: true  # Include ✓/✗ examples in prompts
-  minimize_xml_structure: true       # Reduce excessive XML tags in prompts  
-  decisive_recommendations: true     # Encourage single, strong recommendations
-  preserve_uncertainty: false       # Whether to include hedging language (usually False for technical tasks)
-
-# Cost Management
+# Cost management and optimization
 cost_management:
-  max_daily_cost: 10.0              # Maximum daily spend in USD
-  max_cost_per_request: 2.0         # Maximum cost per individual request
+  # File size limits for cost control
+  max_file_size_kb: 50              # Skip files larger than this (KB)
+  max_context_size_chars: 100000    # Limit total context size
+  max_files_per_request: 15         # Override batch size for large files
+  use_cheaper_model_threshold_kb: 10 # Use cheaper model for files < this size
   enable_content_compression: true   # Remove comments and whitespace to reduce token usage
+  
+  # Cost thresholds and limits
+  cost_thresholds:
+    daily_limit: 10.0               # Maximum daily cost in USD
+    per_request_limit: 2.0          # Maximum cost per request in USD
+    warning_threshold: 1.0          # Warn when request exceeds this cost
+  
+  # Additional optimizations
+  skip_trivial_files: true          # Skip files with < 5 functions/classes
+  token_usage_logging: true         # Log token usage for cost tracking
+
+# Security settings
+security:
+  enable_ast_validation: false      # Use AST validation (slower but more secure)
+  max_generated_file_size: 50000    # Maximum size for generated test files (bytes)
+  block_dangerous_patterns: true    # Block potentially dangerous code patterns
+
+# Advanced AI prompt engineering settings (Anthropic 2025 Guidelines)
+prompt_engineering:
+  use_2025_guidelines: true         # Use latest Anthropic prompt best practices
+  encourage_step_by_step: true      # Include step-by-step reasoning prompts
+  use_positive_negative_examples: true # Include positive/negative examples in prompts
+  minimize_xml_structure: true      # Reduce excessive XML tags in prompts
+  decisive_recommendations: true    # Encourage single, strong recommendations
+  preserve_uncertainty: false       # Include hedging language (usually false)

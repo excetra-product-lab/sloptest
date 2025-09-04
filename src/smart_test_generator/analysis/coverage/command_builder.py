@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 
+# Environment service will be imported dynamically to avoid circular imports
+
 
 @dataclass
 class CommandSpec:
@@ -21,6 +23,7 @@ def build_pytest_command(
     project_root: Path,
     config,
     preflight_result: Optional[Dict] = None,
+    environment_service=None,
 ) -> CommandSpec:
     """Construct the pytest command, working directory, and environment from config.
 
@@ -28,10 +31,25 @@ def build_pytest_command(
     - Merges runner.args with test_generation.coverage.pytest_args (runner.args first)
     - Sets cwd from runner.cwd or project_root
     - Propagates env by default; merges env.extra; appends env.append_pythonpath to PYTHONPATH
+    - Uses environment service for enhanced environment detection if provided
     """
+    # Get environment information if service is available
+    env_info = None
+    if environment_service is not None:
+        try:
+            env_info = environment_service.detect_current_environment()
+        except Exception:
+            # Fallback to original behavior if environment detection fails
+            pass
+    
     # Defaults and config lookups
     runner_mode = (config.get('test_generation.coverage.runner.mode', 'python-module') or 'python-module').strip()
-    runner_python = config.get('test_generation.coverage.runner.python') or sys.executable
+    
+    # Use environment-aware Python executable if available
+    if env_info and config.get('environment.auto_detect', True):
+        runner_python = env_info.python_executable
+    else:
+        runner_python = config.get('test_generation.coverage.runner.python') or sys.executable
     runner_pytest_path = config.get('test_generation.coverage.runner.pytest_path', 'pytest')
     runner_custom_cmd = config.get('test_generation.coverage.runner.custom_cmd', []) or []
     runner_args = list(config.get('test_generation.coverage.runner.args', []) or [])
@@ -40,13 +58,27 @@ def build_pytest_command(
     # Core coverage args
     cov_args = [f"--cov={project_root}", "--cov-report=term-missing"]
 
-    # Build argv
-    if runner_mode == 'pytest-path':
-        argv = [runner_pytest_path, *cov_args, *runner_args, *extra_pytest_args]
-    elif runner_mode == 'custom' and runner_custom_cmd:
-        argv = [*runner_custom_cmd, *cov_args, *runner_args, *extra_pytest_args]
-    else:
-        argv = [runner_python, '-m', 'pytest', *cov_args, *runner_args, *extra_pytest_args]
+    # Build argv with environment-aware command construction
+    argv = None
+    
+    # Check if we should use environment manager-specific commands
+    if env_info and config.get('environment.auto_detect', True):
+        if (env_info.manager.value == "poetry" and 
+            config.get('environment.overrides.poetry.use_poetry_run', True)):
+            argv = ["poetry", "run", "pytest", *cov_args, *runner_args, *extra_pytest_args]
+        elif (env_info.manager.value == "pipenv" and 
+              config.get('environment.overrides.pipenv.use_pipenv_run', True)):
+            argv = ["pipenv", "run", "pytest", *cov_args, *runner_args, *extra_pytest_args]
+        # For other environment managers, use their Python executable directly
+    
+    # Fallback to original logic if no environment-specific command was built
+    if argv is None:
+        if runner_mode == 'pytest-path':
+            argv = [runner_pytest_path, *cov_args, *runner_args, *extra_pytest_args]
+        elif runner_mode == 'custom' and runner_custom_cmd:
+            argv = [*runner_custom_cmd, *cov_args, *runner_args, *extra_pytest_args]
+        else:
+            argv = [runner_python, '-m', 'pytest', *cov_args, *runner_args, *extra_pytest_args]
 
     # Working directory
     cwd_cfg = config.get('test_generation.coverage.runner.cwd')
