@@ -49,7 +49,7 @@ class TestGenerationPlan:
     estimated_coverage_after: float
     # NEW: Quality-aware fields
     mutation_score_target: float = 80.0
-    quality_score_target: float = 75.0
+    quality_score_target: float = 95.0
     weak_mutation_spots: List['WeakSpot'] = field(default_factory=list)
 
 

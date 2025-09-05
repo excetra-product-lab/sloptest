@@ -28,7 +28,7 @@ test_generation:
     </test_structure>
 
     <code_quality>
-    - Write clean, readable test code
+    - Write clean, readable, well-dcumented test code
     - Use specific assertions with clear error messages
     - Follow the same code style as the source project
     - Structure test files to mirror source code organization
@@ -73,6 +73,7 @@ test_generation:
     EXTENDED THINKING MODE:
     Analyze code structure before generating tests:
     - Examine code dependencies and interaction patterns
+    - Examine all critical code execution paths
     - Identify edge cases and boundary conditions
     - Plan test coverage targeting potential failure points
     - Design tests validating expected and error behaviors
@@ -83,9 +84,10 @@ test_generation:
 
     APPROACH:
     Think step-by-step before writing tests:
-    1. Analyze the code structure and identify testable elements
+    1. Analyze the code structure and identify testable elements and critical code execution paths
     2. Determine test scenarios (happy path, edge cases, errors)
     3. Plan assertions that would fail if code behavior changes
+    4. Plan assertions that would fail if critical code execution paths change
     4. Write the complete test file
 
     REQUIREMENTS:
@@ -115,8 +117,8 @@ test_generation:
 
     DATA HANDLING:
     - Check AVAILABLE_IMPORTS for valid imports
-    - Review CLASS_SIGNATURES for constructor parameters
-    - Provide ALL required fields for dataclasses/classes
+    - Review CLASS_SIGNATURES and the code for constructor parameters
+    - Provide ALL required fields for dataclasses, classes and Pydantic models
     - Mock external dependencies properly
 
     ASSERTION STYLE:

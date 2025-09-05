@@ -161,6 +161,10 @@ class PromptLoader:
             pattern_analysis_summary = self._build_pattern_analysis_summary(template_vars, prompts)
             enhanced_vars["pattern_analysis_summary"] = pattern_analysis_summary
             
+            # Process codebase context if available
+            codebase_context_summary = self._build_codebase_context_summary(template_vars)
+            enhanced_vars["codebase_context_summary"] = codebase_context_summary
+            
             template = refinement.get("user_content_template", "")
             if not template:
                 logger.warning("No refinement user content template found")
@@ -256,7 +260,7 @@ class PromptLoader:
     
     def get_contextual_prompt(self, base_prompt: str, untested_elements: list,
                             existing_tests: str, use_2025_format: bool = True,
-                            quality_target: Optional[float] = None,
+                            quality_target: Optional[float] = 90,
                             mutation_guidance: Optional[dict] = None,
                             config=None) -> str:
         """Get contextual prompt for incremental testing.
@@ -406,14 +410,26 @@ class PromptLoader:
         # Group by mutation type
         weak_spots_by_type = {}
         for spot in weak_spots:
-            mut_type = getattr(spot, 'mutation_type', {}).get('value', 'unknown')
-            if mut_type not in weak_spots_by_type:
-                weak_spots_by_type[mut_type] = []
-            weak_spots_by_type[mut_type].append(spot)
+            # mutation_type may be an Enum (MutationType), a string, or a dict-like
+            mut_type_attr = getattr(spot, 'mutation_type', None)
+            if mut_type_attr is None:
+                mut_type_key = 'unknown'
+            else:
+                try:
+                    # Enum case: use .value
+                    mut_type_key = getattr(mut_type_attr, 'value', mut_type_attr)
+                    # If dict-like, prefer ['value']
+                    if isinstance(mut_type_attr, dict):
+                        mut_type_key = mut_type_attr.get('value', mut_type_key)
+                except Exception:
+                    mut_type_key = str(mut_type_attr)
+            if mut_type_key not in weak_spots_by_type:
+                weak_spots_by_type[mut_type_key] = []
+            weak_spots_by_type[mut_type_key].append(spot)
         
-        for mut_type, spots in weak_spots_by_type.items():
-            if mut_type in patterns:
-                parts.append(patterns[mut_type])
+        for mut_type_key, spots in weak_spots_by_type.items():
+            if mut_type_key in patterns:
+                parts.append(patterns[mut_type_key])
                 
                 # Add suggestion if available
                 if spots and hasattr(spots[0], 'suggested_tests') and spots[0].suggested_tests:
@@ -753,6 +769,68 @@ class PromptLoader:
             parts.append(param_guide)
         
         return "\n\n".join(parts)
+
+    def _build_codebase_context_summary(self, template_vars: Dict[str, Any]) -> str:
+        """Build codebase context summary for refinement prompts."""
+        codebase_context = template_vars.get("codebase_context", {})
+        if not codebase_context:
+            return ""
+        
+        try:
+            source_files = codebase_context.get("source_files", {})
+            summary = codebase_context.get("summary", {})
+            
+            if not source_files:
+                return ""
+            
+            # Build summary of available context
+            summary_parts = []
+            total_files = summary.get("total_source_files", 0)
+            total_lines = summary.get("total_lines", 0)
+            failure_related = summary.get("files_related_to_failures", 0)
+            
+            summary_parts.append(f"**Codebase Context Available**: {total_files} source files ({total_lines:,} lines total)")
+            if failure_related > 0:
+                summary_parts.append(f"- {failure_related} files directly related to test failures")
+            
+            # List key files for reference
+            file_list = []
+            for rel_path, file_info in list(source_files.items())[:10]:  # Show first 10 files
+                size_kb = file_info.get("size", 0) // 1024
+                related_marker = "🔴" if file_info.get("related_to_failures", False) else "📄"
+                file_list.append(f"  {related_marker} {rel_path} ({size_kb}KB)")
+            
+            if len(source_files) > 10:
+                file_list.append(f"  ... and {len(source_files) - 10} more files")
+            
+            if file_list:
+                summary_parts.append("**Key Source Files:**")
+                summary_parts.extend(file_list)
+            
+            # Format as context
+            context_lines = [
+                "",
+                "## Codebase Context",
+                "\n".join(summary_parts),
+                "",
+                "**Full Source Code Context:**"
+            ]
+            
+            # Include source file contents for LLM reference
+            for rel_path, file_info in source_files.items():
+                content = file_info.get("content", "")
+                if content:
+                    context_lines.append(f"**File: {rel_path}**")
+                    context_lines.append("```python")
+                    context_lines.append(content)
+                    context_lines.append("```")
+                    context_lines.append("")
+            
+            return "\n".join(context_lines)
+            
+        except Exception as e:
+            logger.warning(f"Error building codebase context summary: {e}")
+            return ""
 
 
 # Global prompt loader instance

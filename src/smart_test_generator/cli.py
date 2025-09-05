@@ -117,6 +117,11 @@ def setup_argparse() -> argparse.ArgumentParser:
     parser.add_argument("--bedrock-inference-profile", help="AWS Bedrock inference profile identifier")
     parser.add_argument("--bedrock-region", default="us-east-1", help="AWS region for Bedrock (default: us-east-1)")
 
+    # OpenAI arguments
+    parser.add_argument("--openai-api-key", help="OpenAI API key")
+    parser.add_argument("--openai-model", default="gpt-4.1", help="OpenAI model to use")
+    parser.add_argument("--openai-extended-thinking", action="store_true", help="Enable extended thinking mode for OpenAI")
+
     # Common arguments
     parser.add_argument(
         "--force",
@@ -143,8 +148,8 @@ def setup_argparse() -> argparse.ArgumentParser:
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=10,
-        help="Number of files to process in each batch (default: 10)"
+        default=1,
+        help="Number of files to process in each batch (default: 1)"
     )
     parser.add_argument(
         "--streaming",
@@ -581,6 +586,9 @@ def extract_llm_credentials(args) -> dict:
         'azure_endpoint': args.endpoint,
         'azure_api_key': args.api_key,
         'azure_deployment': args.deployment,
+        'openai_api_key': args.openai_api_key or os.environ.get("OPENAI_API_KEY"),
+        'openai_model': args.openai_model,
+        'openai_extended_thinking': getattr(args, 'openai_extended_thinking', False),
     }
     # Only include Bedrock fields if provided
     if getattr(args, 'bedrock_role_arn', None):
@@ -705,9 +713,10 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             # Validate LLM credentials first
             llm_credentials = extract_llm_credentials(args)
             
-            # Require at least one: Claude, Azure, or Bedrock
+            # Require at least one: Claude, Azure, OpenAIor Bedrock
             if not (
                 llm_credentials.get('claude_api_key') or 
+                llm_credentials.get('openai_api_key') or 
                 (llm_credentials.get('azure_endpoint') and llm_credentials.get('azure_api_key') and llm_credentials.get('azure_deployment')) or 
                 (llm_credentials.get('bedrock_role_arn') and llm_credentials.get('bedrock_inference_profile'))
             ):
@@ -720,11 +729,12 @@ def execute_mode_with_status(app: SmartTestGeneratorApp, args, feedback: UserFee
             # Enhanced generation configuration display
             ai_model_label = (
                 llm_credentials['claude_model'] if llm_credentials.get('claude_api_key') else (
+                    f"OpenAI:{llm_credentials.get('openai_model')}" if llm_credentials.get('openai_api_key') else (
                     f"Azure:{llm_credentials.get('azure_deployment')}" if llm_credentials.get('azure_endpoint') else (
                         f"Bedrock:{llm_credentials.get('bedrock_inference_profile')}"
                     )
                 )
-            )
+            ))
             generation_config = {
                 "AI Model": ai_model_label,
                 "Processing Mode": "Streaming" if args.streaming else f"Batch ({args.batch_size} files)",

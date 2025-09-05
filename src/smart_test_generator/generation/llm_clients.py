@@ -26,6 +26,13 @@ except Exception:  # pragma: no cover - optional dependency handled at runtime
     BotoCoreError = Exception
     NoCredentialsError = Exception
 
+try:
+    import openai
+    from openai import OpenAI
+except Exception:  # pragma: no cover - optional dependency handled at runtime
+    openai = None
+    OpenAI = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -281,13 +288,16 @@ class LLMClient(ABC):
         validated_tests = {}
         
         for filepath, test_content in tests_dict.items():
-            is_valid, errors = validate_generated_test(test_content, filepath, available_imports, None)
+            # Normalize content to handle double-escaped sequences and stray code fences
+            normalized_content = self._normalize_generated_test_content(test_content)
+
+            is_valid, errors = validate_generated_test(normalized_content, filepath, available_imports, None)
             if is_valid:
-                validated_tests[filepath] = test_content
+                validated_tests[filepath] = normalized_content
             else:
                 logger.warning(f"Generated test for {filepath} has validation errors: {errors}")
                 # Try to fix basic issues automatically
-                fixed_content = self._attempt_basic_fixes(test_content, errors)
+                fixed_content = self._attempt_basic_fixes(normalized_content, errors)
                 if fixed_content:
                     is_valid_fixed, _ = validate_generated_test(fixed_content, filepath, available_imports, None)
                     if is_valid_fixed:
@@ -299,6 +309,55 @@ class LLMClient(ABC):
                     logger.error(f"Skipping invalid test for {filepath}")
         
         return validated_tests
+
+    def _normalize_generated_test_content(self, content: str) -> str:
+        """Best-effort normalization of model-generated test code strings.
+
+        Handles common issues:
+        - Double-escaped sequences (e.g., \\n, \") left as literals
+        - Code fences (```...```) accidentally included in string values
+        - Excess leading/trailing whitespace
+        """
+        try:
+            if not content:
+                return content
+
+            text = content.strip()
+
+            # Strip code fences if present inside the value
+            if text.startswith("```"):
+                lines = text.split("\n")
+                start_idx = None
+                end_idx = None
+                for i, line in enumerate(lines):
+                    if line.strip().startswith("```"):
+                        if start_idx is None:
+                            start_idx = i + 1
+                        else:
+                            end_idx = i
+                            break
+                if start_idx is not None and end_idx is not None and end_idx > start_idx:
+                    text = "\n".join(lines[start_idx:end_idx])
+
+            # Detect double-escaped content: has \n but no real newline, or contains \" sequences
+            looks_double_escaped = ("\\n" in text and "\n" not in text) or ("\\t" in text) or ("\\\"" in text)
+
+            if looks_double_escaped:
+                # First try JSON unescape round-trip
+                try:
+                    # Wrap as a JSON string to decode escape sequences correctly
+                    text = json.loads(f'"{text}"')
+                except Exception:
+                    # Fallback to unicode_escape decoding
+                    try:
+                        text = bytes(text, "utf-8").decode("unicode_escape")
+                    except Exception:
+                        pass
+
+            return text
+        except Exception:
+            # On any normalization error, return original content
+            return content
 
     def _extract_json_content(self, content: str) -> str:
         """Extract JSON content from the response."""
@@ -553,6 +612,15 @@ class BedrockClient(LLMClient):
 
         # Get system prompt with extended thinking instructions if enabled
         system_prompt = get_system_prompt(config=self.config, extended_thinking=self.extended_thinking)
+
+        # Add strict JSON output instruction tailored for OpenAI to reduce output size
+        format_instruction = (
+            "You must return only JSON. Return exactly one JSON object whose only key is the primary "
+            "file's filepath (from the XML attribute 'filepath' where primary=\"true\"). The value "
+            "must be a single string containing the complete pytest test file. Do not include any "
+            "other keys or any narrative."
+        )
+        system_prompt = f"{system_prompt}\n\n{format_instruction}"
 
         # Calculate optimal parameters for Bedrock
         file_count = len(re.findall(r'<file\s+filename=', xml_content))
@@ -1493,5 +1561,219 @@ class ClaudeAPIClient(LLMClient):
             logger.debug(traceback.format_exc())
             raise LLMClientError(
                 f"Unexpected error during refinement: {e}",
+                suggestion="This appears to be a bug. Please try again or report the issue."
+            )
+
+
+class OpenAIClient(LLMClient):
+    """Client for interacting with OpenAI API using the official openai library."""
+    def __init__(self, api_key: str, model: str = "gpt-4.1", extended_thinking: bool = False,
+                 cost_manager=None, feedback=None, config=None):
+        if OpenAI is None:
+            raise LLMClientError(
+                "openai library is not installed",
+                suggestion="Install with: pip install openai"
+            )
+        self.api_key = api_key
+        self.model = model
+        self.extended_thinking = extended_thinking
+        self.cost_manager = cost_manager
+        self.feedback = feedback
+        self.config = config
+        try:
+            self.client = OpenAI(api_key=api_key, timeout=300.0)
+        except Exception as e:
+            raise AuthenticationError(
+                f"Failed to initialize OpenAI client: {e}",
+                suggestion="Check your OpenAI API key and ensure it's valid."
+            )
+    def generate_unit_tests(self, system_prompt: str, xml_content: str, directory_structure: str,
+                           source_files: List[str] = None, project_root: str = None) -> Dict[str, str]:
+        codebase_info = self._extract_codebase_info(source_files, project_root)
+        user_content = self._build_user_content(xml_content, directory_structure, codebase_info)
+        system_prompt = get_system_prompt(config=self.config, extended_thinking=self.extended_thinking)
+        file_count = len(re.findall(r'<file\s+filename=', xml_content))
+        if file_count == 1:
+            tokens_per_file = 4000
+        elif file_count <= 3:
+            tokens_per_file = 3500
+        elif file_count <= 6:
+            tokens_per_file = 3000
+        else:
+            tokens_per_file = 2000
+        estimated_output_size = max(1, file_count) * tokens_per_file
+        max_tokens = min(8192, max(2048, estimated_output_size))
+        self._log_verbose_prompt(f"OpenAI ({self.model})", system_prompt, user_content, file_count)
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.3,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            finish_reason = getattr(response.choices[0], "finish_reason", None)
+            if hasattr(response, 'usage') and response.usage:
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
+                if self.cost_manager:
+                    self.cost_manager.log_token_usage(self.model, input_tokens, output_tokens)
+            if not content or not content.strip():
+                raise LLMClientError(
+                    "Empty response from OpenAI API",
+                    suggestion="The AI model returned an empty response. Try reducing context size or check your API limits."
+                )
+            json_content = self._extract_json_content(content)
+            try:
+                tests_dict = json.loads(json_content)
+                if len(tests_dict) < file_count:
+                    usage = getattr(response, 'usage', None)
+                    near_cap = False
+                    try:
+                        if usage and getattr(usage, 'completion_tokens', 0) >= max_tokens - 100:
+                            near_cap = True
+                    except Exception:
+                        near_cap = False
+                    if finish_reason == 'length' or near_cap:
+                        logger.error("Response may have been truncated due to token limits.")
+                return self._validate_and_fix_tests(tests_dict, codebase_info)
+            except json.JSONDecodeError as e:
+                tests_dict = self._try_recover_partial_results(json_content, e)
+                return self._validate_and_fix_tests(tests_dict, codebase_info)
+        except openai.AuthenticationError as e:
+            raise AuthenticationError(
+                f"OpenAI authentication failed: {e}",
+                suggestion="Check your OpenAI API key and ensure it's valid."
+            )
+        except openai.RateLimitError as e:
+            raise LLMClientError(
+                f"OpenAI API rate limit exceeded: {e}",
+                suggestion="Wait a moment and try again, or reduce the batch size."
+            )
+        except openai.APITimeoutError as e:
+            raise LLMClientError(
+                f"OpenAI API request timed out: {e}",
+                suggestion="Try again with fewer files or check your network connection."
+            )
+        except openai.APIConnectionError as e:
+            raise LLMClientError(
+                f"Failed to connect to OpenAI API: {e}",
+                suggestion="Check your internet connection and try again."
+            )
+        except openai.BadRequestError as e:
+            raise LLMClientError(
+                f"OpenAI API request error: {e}",
+                suggestion="Check your request parameters and try again with fewer files."
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error with OpenAI: {type(e).__name__}: {e}")
+            raise LLMClientError(
+                f"Unexpected error with OpenAI: {e}",
+                suggestion="This appears to be a bug. Please try again or report the issue."
+            )
+    def refine_tests(self, request: Dict) -> str:
+        payload = request.get("payload", {})
+        prompt = request.get("prompt", "")
+        if not prompt or not payload:
+            return json.dumps({
+                "updated_files": [],
+                "rationale": "No refinement data provided",
+                "plan": "Cannot proceed without proper refinement context",
+            })
+        prompt_loader = get_prompt_loader()
+        system_prompt = prompt_loader.get_refinement_prompt(extended_thinking=self.extended_thinking, config=self.config)
+        user_content = prompt_loader.get_refinement_user_content(
+            prompt=prompt,
+            run_id=payload.get('run_id', 'unknown'),
+            branch=payload.get('repo_meta', {}).get('branch', 'unknown branch'),
+            commit=payload.get('repo_meta', {}).get('commit', 'unknown'),
+            python_version=payload.get('environment', {}).get('python', 'unknown'),
+            platform=payload.get('environment', {}).get('platform', 'unknown'),
+            tests_written_count=len(payload.get('tests_written', [])),
+            last_run_command=' '.join(payload.get('last_run_command', [])),
+            failures_total=payload.get('failures_total', 0),
+            repo_meta=payload.get('repo_meta', {}),
+            failure_analysis=payload.get('failure_analysis', {}),
+        )
+        failure_count = len(payload.get("failures", []))
+        if failure_count <= 2:
+            max_tokens = 2000
+        elif failure_count <= 5:
+            max_tokens = 3000
+        else:
+            max_tokens = 4096
+        self._log_verbose_prompt(f"OpenAI ({self.model})", system_prompt, user_content, 1)
+        try:
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ]
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=0.2,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content
+            if hasattr(response, 'usage') and response.usage and self.cost_manager:
+                self.cost_manager.log_token_usage(self.model, response.usage.prompt_tokens, response.usage.completion_tokens)
+            if not content or not content.strip():
+                return json.dumps({
+                    "updated_files": [],
+                    "rationale": "Empty response from AI model",
+                    "plan": "No refinement suggestions provided",
+                })
+            json_content = self._extract_json_content(content)
+            try:
+                refinement_result = json.loads(json_content)
+                if "updated_files" not in refinement_result:
+                    refinement_result["updated_files"] = []
+                return json.dumps(refinement_result)
+            except json.JSONDecodeError as e:
+                recovered = self._try_recover_partial_results(json_content, e)
+                if not isinstance(recovered, dict) or "updated_files" not in recovered:
+                    recovered = {
+                        "updated_files": [],
+                        "rationale": "Failed to recover refinement results from malformed JSON",
+                        "plan": "JSON parsing error occurred during recovery",
+                    }
+                return json.dumps(recovered)
+        except openai.AuthenticationError as e:
+            raise AuthenticationError(
+                f"OpenAI authentication failed for refinement: {e}",
+                suggestion="Check your OpenAI API key and ensure it's valid."
+            )
+        except openai.RateLimitError as e:
+            raise LLMClientError(
+                f"OpenAI API rate limit exceeded for refinement: {e}",
+                suggestion="Wait a moment and try again."
+            )
+        except openai.APITimeoutError as e:
+            raise LLMClientError(
+                f"OpenAI refinement request timed out: {e}",
+                suggestion="Try again or reduce the complexity of the refinement request."
+            )
+        except openai.APIConnectionError as e:
+            raise LLMClientError(
+                f"Failed to connect to OpenAI API for refinement: {e}",
+                suggestion="Check your internet connection and try again."
+            )
+        except openai.BadRequestError as e:
+            raise LLMClientError(
+                f"OpenAI API request error for refinement: {e}",
+                suggestion="Check your refinement request parameters."
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error during OpenAI refinement: {type(e).__name__}: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
+            raise LLMClientError(
+                f"Unexpected error during OpenAI refinement: {e}",
                 suggestion="This appears to be a bug. Please try again or report the issue."
             )

@@ -34,7 +34,9 @@ class CostManager:
             'claude-3-5-sonnet-20241022': {'input': 0.003, 'output': 0.015},
             'claude-3-7-sonnet-20250219': {'input': 0.003, 'output': 0.015},
             'claude-sonnet-4-20250514': {'input': 0.003, 'output': 0.015},
-            'claude-opus-4-20250514': {'input': 0.015, 'output': 0.075}
+            'claude-opus-4-20250514': {'input': 0.015, 'output': 0.075},
+            # Approximate OpenAI pricing (per 1K tokens). Adjust as needed.
+            'gpt-4.1': {'input': 0.005, 'output': 0.015},
         }
     
     def should_skip_file(self, file_path: str) -> Tuple[bool, str]:

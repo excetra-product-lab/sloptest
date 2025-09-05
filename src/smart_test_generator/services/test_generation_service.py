@@ -35,7 +35,7 @@ class TestGenerationService(BaseService):
         self.reporter = TestGenerationReporter(project_root)
     
     def generate_tests(self, llm_client: LLMClient, test_plans: List[TestGenerationPlan], 
-                      directory_structure: str, batch_size: int = 10, 
+                      directory_structure: str, batch_size: int = 1, 
                       generation_reasons: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Generate tests using hybrid approach: LLM batching + streaming writes."""
         if not test_plans:
@@ -123,7 +123,7 @@ class TestGenerationService(BaseService):
 
             # Optional post-generation pytest run (does not fail generation)
             try:
-                self._maybe_run_pytest_post_generation(written_files, llm_client)
+                self._maybe_run_pytest_post_generation(written_files, llm_client, batch_size)
             except Exception as e:
                 self.feedback.warning(f"Post-generation pytest run skipped due to error: {e}")
 
@@ -213,7 +213,7 @@ class TestGenerationService(BaseService):
 
             # Optional post-generation pytest run (does not fail generation)
             try:
-                self._maybe_run_pytest_post_generation(written_files, llm_client)
+                self._maybe_run_pytest_post_generation(written_files, llm_client, batch_size=1)  # Streaming uses batch size 1
             except Exception as e:
                 self.feedback.warning(f"Post-generation pytest run skipped due to error: {e}")
             
@@ -331,10 +331,14 @@ class TestGenerationService(BaseService):
         except Exception as e:
             return TestFileResult(source_path, False, str(e))
 
-    def _maybe_run_pytest_post_generation(self, written_files: List[str], llm_client: Optional[LLMClient] = None) -> None:
+    def _maybe_run_pytest_post_generation(self, written_files: List[str], llm_client: Optional[LLMClient] = None, batch_size: int = 1) -> None:
         """Optionally run pytest after generation based on configuration.
 
         Uses existing runner infrastructure to invoke pytest with minimal defaults.
+        Args:
+            written_files: List of files that were written during generation
+            llm_client: LLM client for refinement (if enabled)
+            batch_size: Batch size to use for refinement processing
         """
         try:
             enabled = bool(self.config.get('test_generation.generation.test_runner.enable', False))
@@ -441,6 +445,7 @@ class TestGenerationService(BaseService):
                             last_run_command=result.cmd,
                             include_git_context=include_git_context,
                             include_pattern_analysis=include_pattern_analysis,
+                            batch_size=batch_size,
                         )
 
                         # Prepare artifacts dir for refinement using the run_id from payload
@@ -481,6 +486,7 @@ class TestGenerationService(BaseService):
                             apply_updates_fn=_apply_updates,
                             re_run_pytest_fn=_re_run_pytest,
                             feedback=self.feedback,
+                            batch_size=batch_size,
                         )
 
                         # Summarize enhanced refinement outcome

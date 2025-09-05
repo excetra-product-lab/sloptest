@@ -270,6 +270,7 @@ def run_refinement_cycle(
     apply_updates_fn,
     re_run_pytest_fn,
     feedback=None,
+    batch_size: int = 10,
 ) -> RefinementOutcome:
     refine_cfg = config.get("test_generation.generation.refine", {}) or {}
     if not refine_cfg.get("enable", False):
@@ -324,9 +325,15 @@ def run_refinement_cycle(
     risk_assessments = []
     reasoning_quality = "not_assessed"  # Will be updated based on AI responses
 
+    # Note: batch_size now limits the number of failures processed (handled in payload builder)
+    failures_to_process = len(payload.get("failures", []))
+    if feedback and failures_to_process > 0:
+        feedback.info(f"Processing {failures_to_process} failures (limited by batch size: {batch_size})")
+
     for attempt in range(1, max_retries + 1):
         iter_dir = artifacts_dir / f"iter_{attempt}"
         iter_dir.mkdir(parents=True, exist_ok=True)
+        
         # Call LLM with retry for server errors
         response_text = ""
         api_error_occurred = False

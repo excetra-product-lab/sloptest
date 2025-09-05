@@ -102,7 +102,7 @@ class SmartTestGeneratorApp:
             self.feedback.error(f"Status retrieval failed: {e}")
             raise
     
-    def run_generate_mode(self, llm_credentials: Dict, batch_size: int = 10, 
+    def run_generate_mode(self, llm_credentials: Dict, batch_size: int = 1, 
                          force: bool = False, dry_run: bool = False, 
                          streaming: bool = False) -> str:
         """Run test generation mode."""

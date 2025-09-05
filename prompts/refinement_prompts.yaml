@@ -56,6 +56,8 @@ refinement:
     - Last command: {last_run_command}
     - Total failures: {failures_total}
     {pattern_analysis_summary}
+    
+    {codebase_context_summary}
 
   # Git context summary template
   git_context_summary_template: |

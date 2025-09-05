@@ -156,11 +156,13 @@ def build_payload(
     snippet_radius: int = 20,
     include_git_context: bool = True,
     include_pattern_analysis: bool = True,
+    batch_size: int = None,
 ) -> Dict[str, Any]:
     run_id = str(int(time.time() * 1000))
 
-    # Limit to top N failures
-    selected: List[FailureRecord] = failures.failures[:top_n]
+    # Limit failures based on batch_size (if provided) or top_n
+    failure_limit = batch_size if batch_size is not None else top_n
+    selected: List[FailureRecord] = failures.failures[:failure_limit]
 
     # Build failure entries with snippets
     normalized_failures: List[Dict[str, Any]] = []
@@ -195,6 +197,15 @@ def build_payload(
         "failures": normalized_failures,
         "failures_total": failures.total,
     }
+    
+    # Add codebase context if enabled
+    include_codebase_context = config.get('test_generation.include_full_codebase_context', True)
+    if include_codebase_context:
+        try:
+            codebase_context = _gather_codebase_context(project_root, config, failures)
+            payload["codebase_context"] = codebase_context
+        except Exception as e:
+            logger.warning(f"Failed to gather codebase context for refinement: {e}")
     
     # Add git-based failure context if available
     if include_git_context:
@@ -336,6 +347,144 @@ def build_refine_prompt(payload: Dict[str, Any], config: Config) -> str:
         confidence_level=confidence_level
     )
 
+
+def _gather_codebase_context(project_root: Path, config: Config, failures: ParsedFailures) -> Dict[str, Any]:
+    """Gather codebase context relevant to the failing tests."""
+    from smart_test_generator.utils.parser import PythonCodebaseParser
+    
+    context = {
+        "source_files": {},
+        "summary": {
+            "total_source_files": 0,
+            "total_lines": 0,
+            "files_related_to_failures": 0
+        }
+    }
+    
+    try:
+        # Get all Python source files
+        parser = PythonCodebaseParser(str(project_root), config)
+        all_files = parser.find_python_files()
+        
+        # Filter out test files to focus on source code
+        source_files = [f for f in all_files if not _is_test_file(f)]
+        
+        # Prioritize files that might be related to the failures
+        failure_related_files = set()
+        for failure in failures.failures:
+            # Try to find source files that might be related to failing tests
+            related_files = _find_related_source_files(failure.file, source_files, project_root)
+            failure_related_files.update(related_files)
+        
+        # Limit the number of files to include to avoid token overload
+        max_context_files = config.get('test_generation.max_context_files', 30)
+        max_file_size = config.get('test_generation.max_context_file_size', 8000)
+        
+        # Prioritize failure-related files first
+        files_to_include = list(failure_related_files)[:max_context_files//2]  # Use half for failure-related
+        
+        # Add other important files (same package, frequently imported, etc.)
+        remaining_slots = max_context_files - len(files_to_include)
+        if remaining_slots > 0:
+            other_files = [f for f in source_files if f not in files_to_include]
+            files_to_include.extend(other_files[:remaining_slots])
+        
+        total_lines = 0
+        for file_path in files_to_include:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+                
+                # Truncate very large files
+                if len(file_content) > max_file_size:
+                    file_content = f"# File truncated (original size: {len(file_content):,} chars)\n{file_content[:max_file_size//2]}...\n{file_content[-max_file_size//2:]}"
+                
+                rel_path = os.path.relpath(file_path, project_root)
+                context["source_files"][rel_path] = {
+                    "content": file_content,
+                    "size": len(file_content),
+                    "related_to_failures": file_path in failure_related_files
+                }
+                total_lines += len(file_content.split('\n'))
+                
+            except Exception as e:
+                logger.debug(f"Failed to read source file {file_path}: {e}")
+        
+        # Update summary
+        context["summary"] = {
+            "total_source_files": len(context["source_files"]),
+            "total_lines": total_lines,
+            "files_related_to_failures": len([f for f in context["source_files"].values() if f["related_to_failures"]])
+        }
+        
+        logger.debug(f"Gathered codebase context: {len(context['source_files'])} files, {total_lines:,} lines")
+        
+    except Exception as e:
+        logger.error(f"Error gathering codebase context: {e}")
+        # Return minimal context on error
+        context = {"source_files": {}, "summary": {"error": str(e)}}
+    
+    return context
+
+def _is_test_file(file_path: str) -> bool:
+    """Check if a file is a test file."""
+    filename = os.path.basename(file_path)
+    return (filename.startswith('test_') or 
+            filename.endswith('_test.py') or 
+            'test' in file_path.split(os.sep))
+
+def _find_related_source_files(test_file_path: str, source_files: List[str], project_root: Path) -> List[str]:
+    """Find source files that might be related to a test file."""
+    related_files = []
+    
+    try:
+        # Convert test file path to potential source file names
+        test_filename = os.path.basename(test_file_path)
+        
+        # Remove test prefixes/suffixes to get the module name
+        if test_filename.startswith('test_'):
+            module_name = test_filename[5:]  # Remove 'test_'
+        elif test_filename.endswith('_test.py'):
+            module_name = test_filename[:-8] + '.py'  # Remove '_test.py' and add '.py'
+        else:
+            module_name = test_filename
+        
+        # Look for files with matching names
+        for source_file in source_files:
+            source_filename = os.path.basename(source_file)
+            
+            # Direct name match
+            if source_filename == module_name:
+                related_files.append(source_file)
+                continue
+            
+            # Same directory (likely related)
+            test_dir = os.path.dirname(test_file_path)
+            source_dir = os.path.dirname(source_file)
+            
+            # Convert test directory to source directory
+            if 'tests' in test_dir:
+                # Map test directory to source directory
+                source_equivalent = test_dir.replace('tests', 'src')
+                if source_equivalent in source_dir or source_dir in source_equivalent:
+                    related_files.append(source_file)
+                    continue
+            
+            # Check if test file imports this source file (basic heuristic)
+            try:
+                with open(os.path.join(project_root, test_file_path), 'r', encoding='utf-8') as f:
+                    test_content = f.read()
+                    
+                source_module = os.path.relpath(source_file, project_root).replace(os.sep, '.').replace('.py', '')
+                if source_module in test_content or source_filename.replace('.py', '') in test_content:
+                    related_files.append(source_file)
+            except:
+                pass  # Ignore errors in heuristic analysis
+    
+    except Exception as e:
+        logger.debug(f"Error finding related source files for {test_file_path}: {e}")
+    
+    return related_files
 
 def _determine_confidence_level(failure_analysis: Dict[str, Any]) -> str:
     """Determine confidence level based on failure analysis data."""
